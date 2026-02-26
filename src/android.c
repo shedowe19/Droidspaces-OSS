@@ -126,15 +126,17 @@ void android_configure_iptables(void) {
   char *cmds[][32] = {{"iptables", "-t", "filter", "-F", NULL},
                       {"ip6tables", "-t", "filter", "-F", NULL},
                       {"iptables", "-P", "FORWARD", "ACCEPT", NULL},
-                      {"iptables", "-t", "nat", "-A", "POSTROUTING", "-s",
+                      /* The following rules are disabled as they can disrupt host connectivity
+                       * when using shared network namespaces (which is default). */
+                      /* {"iptables", "-t", "nat", "-A", "POSTROUTING", "-s",
                        "10.0.3.0/24", "!", "-d", "10.0.3.0/24", "-j",
-                       "MASQUERADE", NULL},
-                      {"iptables", "-t", "nat", "-A", "OUTPUT", "-p", "tcp",
+                       "MASQUERADE", NULL}, */
+                      /* {"iptables", "-t", "nat", "-A", "OUTPUT", "-p", "tcp",
                        "-d", "127.0.0.1", "-m", "tcp", "--dport", "1:65535",
-                       "-j", "REDIRECT", "--to-ports", "1-65535", NULL},
-                      {"iptables", "-t", "nat", "-A", "OUTPUT", "-p", "udp",
+                       "-j", "REDIRECT", "--to-ports", "1-65535", NULL}, */
+                      /* {"iptables", "-t", "nat", "-A", "OUTPUT", "-p", "udp",
                        "-d", "127.0.0.1", "-m", "udp", "--dport", "1:65535",
-                       "-j", "REDIRECT", "--to-ports", "1-65535", NULL}};
+                       "-j", "REDIRECT", "--to-ports", "1-65535", NULL} */};
 
   for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
     run_command_quiet(cmds[i]);

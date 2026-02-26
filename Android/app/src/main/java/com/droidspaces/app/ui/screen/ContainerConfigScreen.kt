@@ -27,6 +27,7 @@ fun ContainerConfigScreen(
     initialEnableIPv6: Boolean = false,
     initialEnableAndroidStorage: Boolean = false,
     initialEnableHwAccess: Boolean = false,
+    initialEnableSensors: Boolean = false,
     initialSelinuxPermissive: Boolean = false,
     initialVolatileMode: Boolean = false,
     initialBindMounts: List<BindMount> = emptyList(),
@@ -36,6 +37,7 @@ fun ContainerConfigScreen(
         enableIPv6: Boolean,
         enableAndroidStorage: Boolean,
         enableHwAccess: Boolean,
+        enableSensors: Boolean,
         selinuxPermissive: Boolean,
         volatileMode: Boolean,
         bindMounts: List<BindMount>,
@@ -47,6 +49,7 @@ fun ContainerConfigScreen(
     var enableIPv6 by remember { mutableStateOf(initialEnableIPv6) }
     var enableAndroidStorage by remember { mutableStateOf(initialEnableAndroidStorage) }
     var enableHwAccess by remember { mutableStateOf(initialEnableHwAccess) }
+    var enableSensors by remember { mutableStateOf(initialEnableSensors) }
     var selinuxPermissive by remember { mutableStateOf(initialSelinuxPermissive) }
     var volatileMode by remember { mutableStateOf(initialVolatileMode) }
     var bindMounts by remember { mutableStateOf(initialBindMounts) }
@@ -123,7 +126,7 @@ fun ContainerConfigScreen(
             ) {
                 Button(
                     onClick = {
-                        onNext(enableIPv6, enableAndroidStorage, enableHwAccess, selinuxPermissive, volatileMode, bindMounts, dnsServers, runAtBoot)
+                        onNext(enableIPv6, enableAndroidStorage, enableHwAccess, enableSensors, selinuxPermissive, volatileMode, bindMounts, dnsServers, runAtBoot)
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -197,6 +200,14 @@ fun ContainerConfigScreen(
                 description = context.getString(R.string.hardware_access_description),
                 checked = enableHwAccess,
                 onCheckedChange = { enableHwAccess = it }
+            )
+
+            ToggleCard(
+                icon = Icons.Default.BatteryChargingFull,
+                title = context.getString(R.string.enable_sensors),
+                description = context.getString(R.string.enable_sensors_description),
+                checked = enableSensors,
+                onCheckedChange = { enableSensors = it }
             )
 
             ToggleCard(

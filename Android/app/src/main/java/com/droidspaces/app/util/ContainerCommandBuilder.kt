@@ -60,6 +60,10 @@ object ContainerCommandBuilder {
             parts.add("--hw-access")
         }
 
+        if (container.enableSensors) {
+            parts.add("--sensors")
+        }
+
         if (container.selinuxPermissive) {
             parts.add("--selinux-permissive")
         }
@@ -114,6 +118,7 @@ object ContainerCommandBuilder {
         if (container.enableIPv6) parts.add("--enable-ipv6")
         if (container.enableAndroidStorage) parts.add("--enable-android-storage")
         if (container.enableHwAccess) parts.add("--hw-access")
+        if (container.enableSensors) parts.add("--sensors")
         if (container.selinuxPermissive) parts.add("--selinux-permissive")
         if (container.volatileMode) parts.add("-V")
 

@@ -56,6 +56,7 @@ fun EditContainerScreen(
     var enableIPv6 by remember { mutableStateOf(container.enableIPv6) }
     var enableAndroidStorage by remember { mutableStateOf(container.enableAndroidStorage) }
     var enableHwAccess by remember { mutableStateOf(container.enableHwAccess) }
+    var enableSensors by remember { mutableStateOf(container.enableSensors) }
     var selinuxPermissive by remember { mutableStateOf(container.selinuxPermissive) }
     var volatileMode by remember { mutableStateOf(container.volatileMode) }
     var bindMounts by remember { mutableStateOf(container.bindMounts) }
@@ -67,6 +68,7 @@ fun EditContainerScreen(
     var savedEnableIPv6 by remember { mutableStateOf(container.enableIPv6) }
     var savedEnableAndroidStorage by remember { mutableStateOf(container.enableAndroidStorage) }
     var savedEnableHwAccess by remember { mutableStateOf(container.enableHwAccess) }
+    var savedEnableSensors by remember { mutableStateOf(container.enableSensors) }
     var savedSelinuxPermissive by remember { mutableStateOf(container.selinuxPermissive) }
     var savedVolatileMode by remember { mutableStateOf(container.volatileMode) }
     var savedBindMounts by remember { mutableStateOf(container.bindMounts) }
@@ -90,6 +92,7 @@ fun EditContainerScreen(
             enableIPv6 != savedEnableIPv6 ||
             enableAndroidStorage != savedEnableAndroidStorage ||
             enableHwAccess != savedEnableHwAccess ||
+            enableSensors != savedEnableSensors ||
             selinuxPermissive != savedSelinuxPermissive ||
             volatileMode != savedVolatileMode ||
             bindMounts != savedBindMounts ||
@@ -118,6 +121,7 @@ fun EditContainerScreen(
                     enableIPv6 = enableIPv6,
                     enableAndroidStorage = enableAndroidStorage,
                     enableHwAccess = enableHwAccess,
+                    enableSensors = enableSensors,
                     selinuxPermissive = selinuxPermissive,
                     volatileMode = volatileMode,
                     bindMounts = bindMounts,
@@ -137,6 +141,7 @@ fun EditContainerScreen(
                         savedEnableIPv6 = enableIPv6
                         savedEnableAndroidStorage = enableAndroidStorage
                         savedEnableHwAccess = enableHwAccess
+                        savedEnableSensors = enableSensors
                         savedSelinuxPermissive = selinuxPermissive
                         savedVolatileMode = volatileMode
                         savedBindMounts = bindMounts
@@ -407,6 +412,17 @@ fun EditContainerScreen(
                 onCheckedChange = {
                     clearFocus()
                     enableHwAccess = it
+                }
+            )
+
+            ToggleCard(
+                icon = Icons.Default.BatteryChargingFull,
+                title = context.getString(R.string.enable_sensors),
+                description = context.getString(R.string.enable_sensors_description),
+                checked = enableSensors,
+                onCheckedChange = {
+                    clearFocus()
+                    enableSensors = it
                 }
             )
 

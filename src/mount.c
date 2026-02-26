@@ -146,39 +146,48 @@ int setup_dev(const char *rootfs, int hw_access) {
        * Scan for known GPU devices (Mali, Adreno, DMA heaps) and ensure
        * they have 0666 permissions so non-root container users can access them.
        * This is critical for Pixel devices (Mali) and others. */
-      const char *gpu_patterns[] = {"mali", "kgsl", "dri", "dma_heap", NULL};
       DIR *dir = opendir(dev_path);
       if (dir) {
         struct dirent *entry;
         int found_gpu = 0;
         while ((entry = readdir(dir)) != NULL) {
-          for (int i = 0; gpu_patterns[i]; i++) {
-            if (strstr(entry->d_name, gpu_patterns[i])) {
-              char full_path[PATH_MAX];
-              snprintf(full_path, sizeof(full_path), "%s/%s", dev_path,
-                       entry->d_name);
+          int match = 0;
 
-              /* Check if it's a directory (like /dev/dri or /dev/dma_heap) */
-              struct stat st;
-              if (stat(full_path, &st) == 0) {
-                if (S_ISDIR(st.st_mode)) {
-                   /* Recursively chmod directory contents */
-                   DIR *sub = opendir(full_path);
-                   if (sub) {
-                     struct dirent *sub_e;
-                     while ((sub_e = readdir(sub)) != NULL) {
-                       if (sub_e->d_name[0] == '.') continue;
-                       char sub_p[PATH_MAX];
-                       snprintf(sub_p, sizeof(sub_p), "%s/%s", full_path, sub_e->d_name);
-                       chmod(sub_p, 0666);
-                     }
-                     closedir(sub);
+          /* Strict matching logic:
+           * - Prefix match: mali*, kgsl*
+           * - Exact match: dri, dma_heap, genlock
+           */
+          if (strncmp(entry->d_name, "mali", 4) == 0) match = 1;
+          else if (strncmp(entry->d_name, "kgsl", 4) == 0) match = 1;
+          else if (strcmp(entry->d_name, "dri") == 0) match = 1;
+          else if (strcmp(entry->d_name, "dma_heap") == 0) match = 1;
+          else if (strcmp(entry->d_name, "genlock") == 0) match = 1;
+
+          if (match) {
+            char full_path[PATH_MAX];
+            snprintf(full_path, sizeof(full_path), "%s/%s", dev_path,
+                     entry->d_name);
+
+            /* Check if it's a directory (like /dev/dri or /dev/dma_heap) */
+            struct stat st;
+            if (stat(full_path, &st) == 0) {
+              if (S_ISDIR(st.st_mode)) {
+                 /* Recursively chmod directory contents */
+                 DIR *sub = opendir(full_path);
+                 if (sub) {
+                   struct dirent *sub_e;
+                   while ((sub_e = readdir(sub)) != NULL) {
+                     if (sub_e->d_name[0] == '.') continue;
+                     char sub_p[PATH_MAX];
+                     snprintf(sub_p, sizeof(sub_p), "%s/%s", full_path, sub_e->d_name);
+                     chmod(sub_p, 0666);
                    }
-                } else {
-                   chmod(full_path, 0666);
-                }
-                found_gpu = 1;
+                   closedir(sub);
+                 }
+              } else {
+                 chmod(full_path, 0666);
               }
+              found_gpu = 1;
             }
           }
         }

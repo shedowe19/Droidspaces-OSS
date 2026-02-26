@@ -46,8 +46,8 @@ void print_usage(void) {
   printf(
       "  -d, --dns=SERVERS         Set custom DNS servers (comma separated)\n");
   printf("  -f, --foreground          Run in foreground (attach console)\n");
-  printf("  --gpu                     Enable GPU access (alias for --hw-access)\n");
-  printf("  --sensors                 Expose battery/thermal sensors to container\n");
+  printf("  -g, --gpu                 Enable GPU access (alias for --hw-access)\n");
+  printf("  -s, --sensors             Expose battery/thermal sensors to container\n");
   printf("  -V, --volatile            Discard changes on exit (OverlayFS)\n");
   printf(
       "  -B, --bind-mount=SRC:DEST Bind mount host directory into container\n");

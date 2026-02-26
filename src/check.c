@@ -225,6 +225,11 @@ void print_gpu_check(void) {
   check_append("\n" C_BOLD "DMA Buffers (Required for newer drivers):" C_RESET "\n");
   check_gpu_node("/dev/dma_heap/system", "System Heap");
   check_gpu_node("/dev/dma_heap/linux,cma", "CMA Heap");
+  check_gpu_node("/dev/udmabuf", "DMA Buffer Sharing");
+
+  check_append("\n" C_BOLD "Other Accelerators:" C_RESET "\n");
+  check_gpu_node("/dev/edgetpu", "EdgeTPU (Tensor)");
+  check_gpu_node("/dev/video0", "Video V4L2 Device");
 
   check_append("\n" C_BOLD "Summary:" C_RESET "\n");
   check_append("  To use GPU in container, enable " C_GREEN "GPU / Hardware Access" C_RESET " in the app,\n");

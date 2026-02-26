@@ -173,14 +173,17 @@ int setup_dev(const char *rootfs, struct ds_config *cfg) {
           int match = 0;
 
           /* Strict matching logic:
-           * - Prefix match: mali*, kgsl*
-           * - Exact match: dri, dma_heap, genlock
+           * - Prefix match: mali*, kgsl*, edgetpu*, video*
+           * - Exact match: dri, dma_heap, genlock, udmabuf
            */
           if (strncmp(entry->d_name, "mali", 4) == 0) match = 1;
           else if (strncmp(entry->d_name, "kgsl", 4) == 0) match = 1;
+          else if (strncmp(entry->d_name, "edgetpu", 7) == 0) match = 1;
+          else if (strncmp(entry->d_name, "video", 5) == 0) match = 1;
           else if (strcmp(entry->d_name, "dri") == 0) match = 1;
           else if (strcmp(entry->d_name, "dma_heap") == 0) match = 1;
           else if (strcmp(entry->d_name, "genlock") == 0) match = 1;
+          else if (strcmp(entry->d_name, "udmabuf") == 0) match = 1;
 
           if (match) {
             char full_path[PATH_MAX];

@@ -89,6 +89,13 @@
 #define DS_DNS_DEFAULT_1 "1.1.1.1"
 #define DS_DNS_DEFAULT_2 "8.8.8.8"
 
+/* Network Modes */
+enum ds_net_mode {
+  DS_NET_HOST = 0, /* Shared network namespace (default) */
+  DS_NET_NAT,      /* veth pair + NAT (fake MAC/own IP, works on Mobile) */
+  DS_NET_MACVLAN   /* Macvlan bridge (real LAN IP, Wi-Fi only, requires driver support) */
+};
+
 /* Common Paths & Patterns */
 #define DS_PROC_ROOT_FMT "/proc/%d/root"
 #define DS_PROC_CMDLINE_FMT "/proc/%d/cmdline"
@@ -180,6 +187,7 @@ struct ds_config {
   mode_t gpu_mode;        /* --gpu-mode (default 0660) */
   gid_t gpu_group;        /* --gpu-group (default -1) */
   int sensors;            /* --sensors */
+  enum ds_net_mode net_mode; /* --network-mode */
   int volatile_mode;      /* --volatile */
   int enable_ipv6;        /* --enable-ipv6 */
   int android_storage;    /* --enable-android-storage */
@@ -285,6 +293,7 @@ int ds_cgroup_attach(pid_t target_pid);
  * ---------------------------------------------------------------------------*/
 
 int fix_networking_host(struct ds_config *cfg);
+int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg);
 int fix_networking_rootfs(struct ds_config *cfg);
 int ds_get_dns_servers(const char *custom_dns, char *out, size_t size);
 int detect_ipv6_in_container(pid_t pid);

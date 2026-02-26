@@ -365,6 +365,10 @@ int start_rootfs(struct ds_config *cfg) {
      * monitor can cleanup host mounts. */
     int ns_flags = CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWPID;
 
+    if (cfg->net_mode != DS_NET_HOST) {
+      ns_flags |= CLONE_NEWNET;
+    }
+
     /* Adaptive Cgroup Namespace (introduced in Linux 4.6) */
     if (access("/proc/self/ns/cgroup", F_OK) == 0) {
       /* To get isolation from a cgroup namespace, we must be in a sub-cgroup
@@ -403,6 +407,15 @@ int start_rootfs(struct ds_config *cfg) {
       close(sync_pipe[1]);
       /* internal_boot will handle its own stdfds. */
       exit(internal_boot(cfg));
+    }
+
+    /* Configure network namespace if requested (from Monitor context) */
+    if (cfg->net_mode != DS_NET_HOST) {
+      if (ds_configure_network_namespace(init_pid, cfg) < 0) {
+        ds_error("Failed to configure network namespace. Killing container.");
+        kill(init_pid, SIGKILL);
+        exit(EXIT_FAILURE);
+      }
     }
 
     /* Write child PID to sync pipe so parent knows it */
@@ -648,12 +661,12 @@ int enter_namespace(pid_t pid) {
     return -1;
   }
 
-  const char *ns_names[] = {"mnt", "uts", "ipc", "pid", "cgroup"};
-  int ns_fds[5];
+  const char *ns_names[] = {"mnt", "uts", "ipc", "pid", "cgroup", "net"};
+  int ns_fds[6];
   char path[PATH_MAX];
 
   /* 1. Open all namespace descriptors first (CRITICAL: before any setns) */
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 6; i++) {
     snprintf(path, sizeof(path), "/proc/%d/ns/%s", pid, ns_names[i]);
     ns_fds[i] = open(path, O_RDONLY);
     if (ns_fds[i] < 0) {
@@ -673,14 +686,14 @@ int enter_namespace(pid_t pid) {
   }
 
   /* 2. Enter namespaces */
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 6; i++) {
     if (ns_fds[i] < 0)
       continue;
 
     if (setns(ns_fds[i], 0) < 0) {
       if (i == 0) { /* mnt is mandatory */
         ds_error("setns(mnt) failed: %s", strerror(errno));
-        for (int j = i; j < 5; j++)
+        for (int j = i; j < 6; j++)
           if (ns_fds[j] >= 0)
             close(ns_fds[j]);
         return -1;

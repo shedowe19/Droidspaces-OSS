@@ -115,6 +115,7 @@ int main(int argc, char **argv) {
       {"gpu-mode", required_argument, 0, 1001},
       {"gpu-group", required_argument, 0, 1002},
       {"sensors", no_argument, 0, 's'},
+      {"network-mode", required_argument, 0, 'N'},
       {"enable-ipv6", no_argument, 0, 'I'},
       {"enable-android-storage", no_argument, 0, 'S'},
       {"selinux-permissive", no_argument, 0, 'P'},
@@ -144,7 +145,7 @@ int main(int argc, char **argv) {
 
   int strict = (discovered_cmd && (strcmp(discovered_cmd, "run") == 0));
   const char *optstring =
-      strict ? "+r:i:n:p:h:d:fHISPvVB:gs" : "r:i:n:p:h:d:fHISPvVB:gs";
+      strict ? "+r:i:n:p:h:d:fHISPvVB:gsN:" : "r:i:n:p:h:d:fHISPvVB:gsN:";
 
   int opt;
   while ((opt = getopt_long(argc, argv, optstring, long_options, NULL)) != -1) {
@@ -201,6 +202,18 @@ int main(int argc, char **argv) {
     }
     case 's':
       cfg.sensors = 1;
+      break;
+    case 'N':
+      if (strcmp(optarg, "host") == 0)
+        cfg.net_mode = DS_NET_HOST;
+      else if (strcmp(optarg, "nat") == 0)
+        cfg.net_mode = DS_NET_NAT;
+      else if (strcmp(optarg, "macvlan") == 0)
+        cfg.net_mode = DS_NET_MACVLAN;
+      else {
+        ds_error("Invalid --network-mode: %s (allowed: host, nat, macvlan)", optarg);
+        return 1;
+      }
       break;
     case 'I':
       cfg.enable_ipv6 = 1;

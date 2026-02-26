@@ -177,6 +177,7 @@ struct ds_config {
   /* Flags */
   int foreground;         /* --foreground */
   int hw_access;          /* --hw-access */
+  int sensors;            /* --sensors */
   int volatile_mode;      /* --volatile */
   int enable_ipv6;        /* --enable-ipv6 */
   int android_storage;    /* --enable-android-storage */
@@ -364,5 +365,6 @@ void print_documentation(const char *argv0);
 
 int check_requirements(void);
 int check_requirements_detailed(void);
+void print_gpu_check(void);
 
 #endif /* DROIDSPACE_H */

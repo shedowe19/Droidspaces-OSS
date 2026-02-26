@@ -141,6 +141,53 @@ int setup_dev(const char *rootfs, int hw_access) {
         umount2(path, MNT_DETACH);
         force_unlink(path);
       }
+
+      /* GPU / Hardware Acceleration Fixes
+       * Scan for known GPU devices (Mali, Adreno, DMA heaps) and ensure
+       * they have 0666 permissions so non-root container users can access them.
+       * This is critical for Pixel devices (Mali) and others. */
+      const char *gpu_patterns[] = {"mali", "kgsl", "dri", "dma_heap", NULL};
+      DIR *dir = opendir(dev_path);
+      if (dir) {
+        struct dirent *entry;
+        int found_gpu = 0;
+        while ((entry = readdir(dir)) != NULL) {
+          for (int i = 0; gpu_patterns[i]; i++) {
+            if (strstr(entry->d_name, gpu_patterns[i])) {
+              char full_path[PATH_MAX];
+              snprintf(full_path, sizeof(full_path), "%s/%s", dev_path,
+                       entry->d_name);
+
+              /* Check if it's a directory (like /dev/dri or /dev/dma_heap) */
+              struct stat st;
+              if (stat(full_path, &st) == 0) {
+                if (S_ISDIR(st.st_mode)) {
+                   /* Recursively chmod directory contents */
+                   DIR *sub = opendir(full_path);
+                   if (sub) {
+                     struct dirent *sub_e;
+                     while ((sub_e = readdir(sub)) != NULL) {
+                       if (sub_e->d_name[0] == '.') continue;
+                       char sub_p[PATH_MAX];
+                       snprintf(sub_p, sizeof(sub_p), "%s/%s", full_path, sub_e->d_name);
+                       chmod(sub_p, 0666);
+                     }
+                     closedir(sub);
+                   }
+                } else {
+                   chmod(full_path, 0666);
+                }
+                found_gpu = 1;
+              }
+            }
+          }
+        }
+        closedir(dir);
+        if (found_gpu) {
+          ds_log("GPU Access: Enabled permissions for detected GPU devices.");
+        }
+      }
+
     } else {
       ds_warn("Failed to mount devtmpfs, falling back to tmpfs");
       if (domount("none", dev_path, "tmpfs", MS_NOSUID | MS_NOEXEC,

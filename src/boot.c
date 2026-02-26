@@ -145,6 +145,22 @@ int internal_boot(struct ds_config *cfg) {
     }
   }
 
+  /* Expose sensors (battery/thermal) as RW bind mounts (pinned) */
+  if (cfg->sensors) {
+    ds_log("Sensors: Exposing battery and thermal info...");
+    const char *sensor_paths[] = {"sys/class/power_supply", "sys/class/thermal",
+                                  NULL};
+    for (int i = 0; sensor_paths[i]; i++) {
+      if (access(sensor_paths[i], F_OK) == 0) {
+        /* Pin it as RW mount so it survives the RO remount of parent /sys */
+        if (mount(sensor_paths[i], sensor_paths[i], NULL, MS_BIND | MS_REC,
+                  NULL) < 0) {
+          ds_warn("Failed to expose sensor path: %s", sensor_paths[i]);
+        }
+      }
+    }
+  }
+
   if (mount(NULL, "sys", NULL, MS_REMOUNT | MS_BIND | MS_RDONLY, NULL) < 0) {
     ds_warn("Failed to remount /sys as read-only: %s", strerror(errno));
   }

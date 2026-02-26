@@ -31,6 +31,7 @@ void print_usage(void) {
   printf("  show                      List all running containers\n");
   printf("  scan                      Scan for untracked containers\n");
   printf("  check                     Check system requirements\n");
+  printf("  gpu-check                 Check GPU availability and permissions\n");
   printf("  docs                      Show interactive documentation\n");
   printf("  help                      Show this help message\n");
   printf("  version                   Show version information\n");
@@ -45,6 +46,8 @@ void print_usage(void) {
   printf(
       "  -d, --dns=SERVERS         Set custom DNS servers (comma separated)\n");
   printf("  -f, --foreground          Run in foreground (attach console)\n");
+  printf("  --gpu                     Enable GPU access (alias for --hw-access)\n");
+  printf("  --sensors                 Expose battery/thermal sensors to container\n");
   printf("  -V, --volatile            Discard changes on exit (OverlayFS)\n");
   printf(
       "  -B, --bind-mount=SRC:DEST Bind mount host directory into container\n");
@@ -104,6 +107,8 @@ int main(int argc, char **argv) {
       {"dns", required_argument, 0, 'd'},
       {"foreground", no_argument, 0, 'f'},
       {"hw-access", no_argument, 0, 'H'},
+      {"gpu", no_argument, 0, 'g'},
+      {"sensors", no_argument, 0, 's'},
       {"enable-ipv6", no_argument, 0, 'I'},
       {"enable-android-storage", no_argument, 0, 'S'},
       {"selinux-permissive", no_argument, 0, 'P'},
@@ -133,7 +138,7 @@ int main(int argc, char **argv) {
 
   int strict = (discovered_cmd && (strcmp(discovered_cmd, "run") == 0));
   const char *optstring =
-      strict ? "+r:i:n:p:h:d:fHISPvVB:" : "r:i:n:p:h:d:fHISPvVB:";
+      strict ? "+r:i:n:p:h:d:fHISPvVB:gs" : "r:i:n:p:h:d:fHISPvVB:gs";
 
   int opt;
   while ((opt = getopt_long(argc, argv, optstring, long_options, NULL)) != -1) {
@@ -161,6 +166,12 @@ int main(int argc, char **argv) {
       break;
     case 'H':
       cfg.hw_access = 1;
+      break;
+    case 'g':
+      cfg.hw_access = 1; /* Alias for hw-access */
+      break;
+    case 's':
+      cfg.sensors = 1;
       break;
     case 'I':
       cfg.enable_ipv6 = 1;
@@ -249,6 +260,10 @@ int main(int argc, char **argv) {
   /* Commands that don't need root or config */
   if (strcmp(cmd, "check") == 0)
     return check_requirements_detailed();
+  if (strcmp(cmd, "gpu-check") == 0) {
+    print_gpu_check();
+    return 0;
+  }
   if (strcmp(cmd, "version") == 0) {
     printf("v%s\n", DS_VERSION);
     return 0;

@@ -512,11 +512,11 @@ int start_rootfs(struct ds_config *cfg) {
       }
 
       /* Signal Init to proceed */
-      ssize_t n;
-      while ((n = write(monitor_pipe[1], "1", 1)) < 0) {
+      ssize_t nw;
+      while ((nw = write(monitor_pipe[1], "1", 1)) < 0) {
           if (errno != EINTR) break;
       }
-      if (n != 1) {
+      if (nw != 1) {
           ds_error("Failed to signal Init (network setup): %s", strerror(errno));
           kill(init_pid, SIGKILL);
           exit(EXIT_FAILURE);

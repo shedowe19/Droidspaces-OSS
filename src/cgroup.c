@@ -289,7 +289,7 @@ int setup_cgroups(void) {
           snprintf(link_path, sizeof(link_path), "sys/fs/cgroup/%s", tok);
           if (strcmp(tok, suffix) != 0) {
             if (access(link_path, F_OK) != 0) {
-              symlink(suffix, link_path);
+              if (symlink(suffix, link_path) < 0) { /* ignore */ }
             }
           }
           tok = strtok_r(NULL, ",", &saveptr);

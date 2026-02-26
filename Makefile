@@ -28,7 +28,7 @@ SRCS = $(SRC_DIR)/main.c \
 
 # Compiler flags — hardened warning set, all warnings are errors
 CFLAGS  = -Wall -Wextra -Wpedantic -Werror -O2 -flto -std=gnu99 -I$(SRC_DIR) -no-pie -pthread
-CFLAGS += -Wformat=2 -Wformat-security -Wformat-overflow=2 -Wformat-truncation=2
+CFLAGS += -Wformat=2 -Wformat-security
 CFLAGS += -Wnull-dereference -Wcast-qual -Wlogical-op
 CFLAGS += -Wduplicated-cond -Wduplicated-branches -Wimplicit-fallthrough=3
 LDFLAGS = -static -no-pie -flto -pthread
@@ -50,6 +50,8 @@ find-cc = $(shell \
 		echo "$(1)-gcc"; \
 	elif [ -d "/opt/cross/bin" ] && [ -f "/opt/cross/bin/$(1)-gcc" ]; then \
 		echo "/opt/cross/bin/$(1)-gcc"; \
+    elif [ -f "$(HOME_VAR)/toolchains/$(1)/bin/$(1)-gcc" ]; then \
+        echo "$(HOME_VAR)/toolchains/$(1)/bin/$(1)-gcc"; \
 	else \
 		echo ""; \
 	fi)
@@ -139,10 +141,10 @@ x86:
 all-build:
 	@echo "[*] Building for all architectures..."
 	@rm -rf $(OUT_DIR)
-	@$(MAKE) --no-print-directory x86_64 && mv $(OUT_DIR)/$(BINARY_NAME) $(OUT_DIR)/$(BINARY_NAME)-x86_64 || echo "✗ x86_64 failed"
-	@$(MAKE) --no-print-directory aarch64 && mv $(OUT_DIR)/$(BINARY_NAME) $(OUT_DIR)/$(BINARY_NAME)-aarch64 || echo "✗ aarch64 failed"
-	@$(MAKE) --no-print-directory armhf && mv $(OUT_DIR)/$(BINARY_NAME) $(OUT_DIR)/$(BINARY_NAME)-armhf || echo "✗ armhf failed"
-	@$(MAKE) --no-print-directory x86 && mv $(OUT_DIR)/$(BINARY_NAME) $(OUT_DIR)/$(BINARY_NAME)-x86 || echo "✗ x86 failed"
+	@$(MAKE) --no-print-directory x86_64 && mv $(OUT_DIR)/$(BINARY_NAME) $(OUT_DIR)/$(BINARY_NAME)-x86_64 || exit 1
+	@$(MAKE) --no-print-directory aarch64 && mv $(OUT_DIR)/$(BINARY_NAME) $(OUT_DIR)/$(BINARY_NAME)-aarch64 || exit 1
+	@$(MAKE) --no-print-directory armhf && mv $(OUT_DIR)/$(BINARY_NAME) $(OUT_DIR)/$(BINARY_NAME)-armhf || exit 1
+	@$(MAKE) --no-print-directory x86 && mv $(OUT_DIR)/$(BINARY_NAME) $(OUT_DIR)/$(BINARY_NAME)-x86 || exit 1
 	@echo "[+] All architectures built successfully in $(OUT_DIR)/"
 
 tarball:

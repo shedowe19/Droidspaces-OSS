@@ -73,7 +73,38 @@ android {
             if (keystorePassword.isEmpty()) {
                 println("WARNING: KEYSTORE_PASSWORD not set in local.properties or gradle.properties, using default debug keystore")
             }
+
+            // Ensure debug keystore exists (CI environment might lack default ~/.android/debug.keystore)
+            val debugConfig = getByName("debug")
+            var targetStoreFile = debugConfig.storeFile
+
+            if (targetStoreFile == null || !targetStoreFile!!.exists()) {
+                val localKeystore = rootProject.file("debug.keystore")
+                if (!localKeystore.exists()) {
+                    println("Generating temporary debug keystore at ${localKeystore.absolutePath}...")
+                    try {
+                        exec {
+                            commandLine("keytool", "-genkey", "-v",
+                                "-keystore", localKeystore.absolutePath,
+                                "-storepass", "android",
+                                "-alias", "androiddebugkey",
+                                "-keypass", "android",
+                                "-keyalg", "RSA",
+                                "-keysize", "2048",
+                                "-validity", "10000",
+                                "-dname", "CN=Android Debug,O=Android,C=US")
+                        }
+                    } catch (e: Exception) {
+                        println("Warning: Failed to generate debug keystore: ${e.message}")
+                    }
+                }
+                targetStoreFile = localKeystore
+            }
+
             getByName("debug") {
+                if (targetStoreFile != null && targetStoreFile!!.exists()) {
+                    storeFile = targetStoreFile
+                }
                 storePassword = "android"
                 keyAlias = "androiddebugkey"
                 keyPassword = "android"
@@ -92,7 +123,8 @@ android {
             // Enable R8 full mode for maximum optimization
             isDebuggable = false
             isJniDebuggable = false
-            signingConfig = signingConfigs.getByName("release")
+            // Use release config if it exists (created above), otherwise fallback to debug (safe default)
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
         debug {
             // Disable minification in debug for faster builds

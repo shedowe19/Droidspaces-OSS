@@ -26,6 +26,7 @@ import com.droidspaces.app.ui.util.ClearFocusOnClickOutside
 import com.droidspaces.app.ui.util.FocusUtils
 import androidx.compose.foundation.clickable
 import com.droidspaces.app.ui.component.ToggleCard
+import com.droidspaces.app.ui.component.NetworkModeSelector
 import com.droidspaces.app.util.ContainerInfo
 import com.droidspaces.app.util.ContainerManager
 import com.droidspaces.app.util.SystemInfoManager
@@ -56,6 +57,8 @@ fun EditContainerScreen(
     var enableIPv6 by remember { mutableStateOf(container.enableIPv6) }
     var enableAndroidStorage by remember { mutableStateOf(container.enableAndroidStorage) }
     var enableHwAccess by remember { mutableStateOf(container.enableHwAccess) }
+    var enableSensors by remember { mutableStateOf(container.enableSensors) }
+    var networkMode by remember { mutableStateOf(container.networkMode) }
     var selinuxPermissive by remember { mutableStateOf(container.selinuxPermissive) }
     var volatileMode by remember { mutableStateOf(container.volatileMode) }
     var bindMounts by remember { mutableStateOf(container.bindMounts) }
@@ -67,6 +70,8 @@ fun EditContainerScreen(
     var savedEnableIPv6 by remember { mutableStateOf(container.enableIPv6) }
     var savedEnableAndroidStorage by remember { mutableStateOf(container.enableAndroidStorage) }
     var savedEnableHwAccess by remember { mutableStateOf(container.enableHwAccess) }
+    var savedEnableSensors by remember { mutableStateOf(container.enableSensors) }
+    var savedNetworkMode by remember { mutableStateOf(container.networkMode) }
     var savedSelinuxPermissive by remember { mutableStateOf(container.selinuxPermissive) }
     var savedVolatileMode by remember { mutableStateOf(container.volatileMode) }
     var savedBindMounts by remember { mutableStateOf(container.bindMounts) }
@@ -90,6 +95,8 @@ fun EditContainerScreen(
             enableIPv6 != savedEnableIPv6 ||
             enableAndroidStorage != savedEnableAndroidStorage ||
             enableHwAccess != savedEnableHwAccess ||
+            enableSensors != savedEnableSensors ||
+            networkMode != savedNetworkMode ||
             selinuxPermissive != savedSelinuxPermissive ||
             volatileMode != savedVolatileMode ||
             bindMounts != savedBindMounts ||
@@ -118,6 +125,8 @@ fun EditContainerScreen(
                     enableIPv6 = enableIPv6,
                     enableAndroidStorage = enableAndroidStorage,
                     enableHwAccess = enableHwAccess,
+                    enableSensors = enableSensors,
+                    networkMode = networkMode,
                     selinuxPermissive = selinuxPermissive,
                     volatileMode = volatileMode,
                     bindMounts = bindMounts,
@@ -137,6 +146,8 @@ fun EditContainerScreen(
                         savedEnableIPv6 = enableIPv6
                         savedEnableAndroidStorage = enableAndroidStorage
                         savedEnableHwAccess = enableHwAccess
+                        savedEnableSensors = enableSensors
+                        savedNetworkMode = networkMode
                         savedSelinuxPermissive = selinuxPermissive
                         savedVolatileMode = volatileMode
                         savedBindMounts = bindMounts
@@ -407,6 +418,25 @@ fun EditContainerScreen(
                 onCheckedChange = {
                     clearFocus()
                     enableHwAccess = it
+                }
+            )
+
+            ToggleCard(
+                icon = Icons.Default.BatteryChargingFull,
+                title = context.getString(R.string.enable_sensors),
+                description = context.getString(R.string.enable_sensors_description),
+                checked = enableSensors,
+                onCheckedChange = {
+                    clearFocus()
+                    enableSensors = it
+                }
+            )
+
+            NetworkModeSelector(
+                networkMode = networkMode,
+                onModeSelected = {
+                    clearFocus()
+                    networkMode = it
                 }
             )
 

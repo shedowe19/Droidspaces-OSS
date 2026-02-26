@@ -182,6 +182,65 @@ int check_requirements(void) {
 }
 
 /* ---------------------------------------------------------------------------
+ * GPU Check Command
+ * ---------------------------------------------------------------------------*/
+
+static void check_gpu_node(const char *path, const char *desc) {
+  int exists = (access(path, F_OK) == 0);
+  int rw = (access(path, R_OK | W_OK) == 0);
+
+  const char *status_color = exists ? (rw ? C_GREEN : C_YELLOW) : C_RED;
+  const char *status_icon = exists ? (rw ? "✓" : "!") : "✗";
+  const char *perm_str = exists ? (rw ? "RW" : "RO/Restricted") : "Not Found";
+
+  check_append("  [%s%s%s] %-20s : %s (%s)\n",
+               status_color, status_icon, C_RESET,
+               path, desc, perm_str);
+}
+
+void print_gpu_check(void) {
+  check_buf_pos = 0;
+  check_buf[0] = '\0';
+
+  check_root(); /* Update is_root status */
+
+  check_append("\n" C_BOLD "Droidspaces GPU Compatibility Check" C_RESET "\n");
+  if (!is_root) {
+    check_append(C_YELLOW "Warning: Running as non-root. Permission checks may fail." C_RESET "\n");
+  }
+  check_append("\n");
+
+  check_append(C_BOLD "ARM Mali (Pixel/Exynos/MediaTek):" C_RESET "\n");
+  check_gpu_node("/dev/mali0", "Mali GPU Device");
+  check_gpu_node("/dev/mali", "Legacy Mali Device");
+
+  check_append("\n" C_BOLD "Qualcomm Adreno:" C_RESET "\n");
+  check_gpu_node("/dev/kgsl-3d0", "Adreno GPU Device");
+  check_gpu_node("/dev/genlock", "Genlock Device");
+
+  check_append("\n" C_BOLD "Standard Linux DRI (Mesa/Turnip):" C_RESET "\n");
+  check_gpu_node("/dev/dri/card0", "DRI Card 0");
+  check_gpu_node("/dev/dri/renderD128", "DRI Render Node");
+
+  check_append("\n" C_BOLD "DMA Buffers (Required for newer drivers):" C_RESET "\n");
+  check_gpu_node("/dev/dma_heap/system", "System Heap");
+  check_gpu_node("/dev/dma_heap/linux,cma", "CMA Heap");
+  check_gpu_node("/dev/udmabuf", "DMA Buffer Sharing");
+
+  check_append("\n" C_BOLD "Other Accelerators:" C_RESET "\n");
+  check_gpu_node("/dev/edgetpu", "EdgeTPU (Tensor)");
+  check_gpu_node("/dev/video0", "Video V4L2 Device");
+
+  check_append("\n" C_BOLD "Summary:" C_RESET "\n");
+  check_append("  To use GPU in container, enable " C_GREEN "GPU / Hardware Access" C_RESET " in the app,\n");
+  check_append("  or run with: " C_GREEN "--gpu" C_RESET " (alias: --hw-access)\n");
+  check_append("  This will expose these devices and fix permissions automatically.\n\n");
+
+  fwrite(check_buf, 1, check_buf_pos, stdout);
+  fflush(stdout);
+}
+
+/* ---------------------------------------------------------------------------
  * Detailed 'check' command
  * ---------------------------------------------------------------------------*/
 

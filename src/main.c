@@ -31,6 +31,7 @@ void print_usage(void) {
   printf("  show                      List all running containers\n");
   printf("  scan                      Scan for untracked containers\n");
   printf("  check                     Check system requirements\n");
+  printf("  gpu-check                 Check GPU availability and permissions\n");
   printf("  docs                      Show interactive documentation\n");
   printf("  help                      Show this help message\n");
   printf("  version                   Show version information\n");
@@ -45,6 +46,12 @@ void print_usage(void) {
   printf(
       "  -d, --dns=SERVERS         Set custom DNS servers (comma separated)\n");
   printf("  -f, --foreground          Run in foreground (attach console)\n");
+  printf("  -g, --gpu                 Enable GPU access (alias for --hw-access)\n");
+  printf("  --gpu-mode=MODE           Set GPU device permissions (default 0660)\n");
+  printf("  --gpu-group=GID           Set GPU device group owner\n");
+  printf("  -s, --sensors             Expose battery/thermal sensors to container\n");
+  printf(
+      "  -N, --network-mode=MODE   Set network mode: host (default), nat, macvlan\n");
   printf("  -V, --volatile            Discard changes on exit (OverlayFS)\n");
   printf(
       "  -B, --bind-mount=SRC:DEST Bind mount host directory into container\n");
@@ -93,6 +100,8 @@ static int validate_kernel_version(void) {
 
 int main(int argc, char **argv) {
   struct ds_config cfg = {0};
+  cfg.gpu_mode = 0660;
+  cfg.gpu_group = (gid_t)-1;
   safe_strncpy(cfg.prog_name, argv[0], sizeof(cfg.prog_name));
 
   static struct option long_options[] = {
@@ -104,6 +113,11 @@ int main(int argc, char **argv) {
       {"dns", required_argument, 0, 'd'},
       {"foreground", no_argument, 0, 'f'},
       {"hw-access", no_argument, 0, 'H'},
+      {"gpu", no_argument, 0, 'g'},
+      {"gpu-mode", required_argument, 0, 1001},
+      {"gpu-group", required_argument, 0, 1002},
+      {"sensors", no_argument, 0, 's'},
+      {"network-mode", required_argument, 0, 'N'},
       {"enable-ipv6", no_argument, 0, 'I'},
       {"enable-android-storage", no_argument, 0, 'S'},
       {"selinux-permissive", no_argument, 0, 'P'},
@@ -124,7 +138,7 @@ int main(int argc, char **argv) {
    */
   const char *discovered_cmd = NULL;
   int temp_optind = optind;
-  while (getopt_long(argc, argv, "+r:i:n:p:h:d:fHISPvVB:", long_options,
+  while (getopt_long(argc, argv, "+r:i:n:p:h:d:fHISPvVB:gsN:", long_options,
                      NULL) != -1)
     ;
   if (optind < argc)
@@ -133,7 +147,7 @@ int main(int argc, char **argv) {
 
   int strict = (discovered_cmd && (strcmp(discovered_cmd, "run") == 0));
   const char *optstring =
-      strict ? "+r:i:n:p:h:d:fHISPvVB:" : "r:i:n:p:h:d:fHISPvVB:";
+      strict ? "+r:i:n:p:h:d:fHISPvVB:gsN:" : "r:i:n:p:h:d:fHISPvVB:gsN:";
 
   int opt;
   while ((opt = getopt_long(argc, argv, optstring, long_options, NULL)) != -1) {
@@ -161,6 +175,47 @@ int main(int argc, char **argv) {
       break;
     case 'H':
       cfg.hw_access = 1;
+      break;
+    case 'g':
+      cfg.hw_access = 1; /* Alias for hw-access */
+      break;
+    case 1001: { /* --gpu-mode */
+      char *endptr;
+      errno = 0;
+      unsigned long val = strtoul(optarg, &endptr, 8);
+      if (errno != 0 || endptr == optarg || *endptr != '\0' || val > 0777) {
+        ds_error("Invalid --gpu-mode: %s (must be octal 0-0777)", optarg);
+        return 1;
+      }
+      cfg.gpu_mode = (mode_t)val;
+      break;
+    }
+    case 1002: { /* --gpu-group */
+      char *endptr;
+      errno = 0;
+      unsigned long val = strtoul(optarg, &endptr, 10);
+      if (errno != 0 || endptr == optarg || *endptr != '\0' ||
+          (unsigned long)(gid_t)val != val || (gid_t)val == (gid_t)-1) {
+        ds_error("Invalid --gpu-group: %s (must be valid GID)", optarg);
+        return 1;
+      }
+      cfg.gpu_group = (gid_t)val;
+      break;
+    }
+    case 's':
+      cfg.sensors = 1;
+      break;
+    case 'N':
+      if (strcmp(optarg, "host") == 0)
+        cfg.net_mode = DS_NET_HOST;
+      else if (strcmp(optarg, "nat") == 0)
+        cfg.net_mode = DS_NET_NAT;
+      else if (strcmp(optarg, "macvlan") == 0)
+        cfg.net_mode = DS_NET_MACVLAN;
+      else {
+        ds_error("Invalid --network-mode: %s (allowed: host, nat, macvlan)", optarg);
+        return 1;
+      }
       break;
     case 'I':
       cfg.enable_ipv6 = 1;
@@ -249,6 +304,10 @@ int main(int argc, char **argv) {
   /* Commands that don't need root or config */
   if (strcmp(cmd, "check") == 0)
     return check_requirements_detailed();
+  if (strcmp(cmd, "gpu-check") == 0) {
+    print_gpu_check();
+    return 0;
+  }
   if (strcmp(cmd, "version") == 0) {
     printf("v%s\n", DS_VERSION);
     return 0;

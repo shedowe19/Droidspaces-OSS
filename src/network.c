@@ -6,6 +6,7 @@
  */
 
 #include "droidspace.h"
+#include <net/if.h>
 
 /* ---------------------------------------------------------------------------
  * Host-side networking setup (before container boot)
@@ -66,9 +67,364 @@ int fix_networking_host(struct ds_config *cfg) {
   if (cfg->dns_servers[0])
     ds_log("Setting up %d custom DNS servers...", count);
 
-  if (is_android()) {
-    /* Android specific NAT and firewall */
+  /* If shared networking (Host mode) on Android, apply basic fixes/optimizations
+   * but skip iptables to avoid breaking connectivity (as per previous fix). */
+  if (cfg->net_mode == DS_NET_HOST && is_android()) {
     android_configure_iptables();
+  }
+
+  return 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Network Namespace Configuration (NAT / Macvlan)
+ * ---------------------------------------------------------------------------*/
+
+static int generate_random_mac(char *buf) {
+  /* Locally Administered Address (x2, x6, xA, xE) */
+  /* We use 02:xx:xx:xx:xx:xx */
+  unsigned char mac[6];
+  int fd = open("/dev/urandom", O_RDONLY);
+  if (fd < 0) return -1;
+
+  ssize_t total_read = 0;
+  while (total_read < 6) {
+    ssize_t n = read(fd, mac + total_read, 6 - total_read);
+    if (n < 0) {
+        if (errno == EINTR) continue;
+        close(fd);
+        return -1;
+    }
+    if (n == 0) { /* Unexpected EOF */
+        close(fd);
+        return -1;
+    }
+    total_read += n;
+  }
+  close(fd);
+
+  mac[0] &= 0xFE; /* Unicast */
+  mac[0] |= 0x02; /* Locally Administered */
+
+  snprintf(buf, 18, "%02x:%02x:%02x:%02x:%02x:%02x",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  return 0;
+}
+
+static int get_wlan_interface(char *buf, size_t size) {
+  DIR *d = opendir("/sys/class/net");
+  if (!d) return -1;
+
+  struct dirent *entry;
+  char best_iface[64] = "";
+  int found = 0;
+
+  while ((entry = readdir(d)) != NULL) {
+    if (entry->d_name[0] == '.') continue;
+    if (strcmp(entry->d_name, "lo") == 0) continue;
+
+    /* Prioritize wireless */
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "/sys/class/net/%s/wireless", entry->d_name);
+    if (access(path, F_OK) == 0) {
+        safe_strncpy(buf, entry->d_name, size);
+        found = 1;
+        break;
+    }
+
+    /* Fallback to any non-loopback interface (e.g. eth0, rev_rmnet) */
+    if (best_iface[0] == '\0') {
+        safe_strncpy(best_iface, entry->d_name, sizeof(best_iface));
+    }
+  }
+  closedir(d);
+
+  if (found) return 0;
+  if (best_iface[0] != '\0') {
+      safe_strncpy(buf, best_iface, size);
+      return 0;
+  }
+  return -1;
+}
+
+/*
+ * This function runs in the MONITOR process (Host NetNS).
+ * It expects the container_pid to be a child process that has ALREADY unshared its NetNS.
+ */
+int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg) {
+  ds_log("Configuring isolated network namespace (PID %d)...", container_pid);
+
+  char veth_host[32], veth_peer[32];
+  snprintf(veth_host, sizeof(veth_host), "veth%d", container_pid);
+  snprintf(veth_peer, sizeof(veth_peer), "vethc%d", container_pid);
+
+  if (cfg->net_mode == DS_NET_NAT) {
+    /* -----------------------------------------------------------------------
+     * NAT Mode: veth pair + iptables MASQUERADE
+     * ----------------------------------------------------------------------- */
+
+    /* Allocator Logic: Collision avoidance */
+    int subnet_id = (container_pid % 250) + 1;
+    /* Try to detect if this subnet is taken by scanning host interfaces.
+     * If taken, increment and retry up to 50 times. */
+    int retries = 50;
+    while (retries-- > 0) {
+        char check_ip[64];
+        snprintf(check_ip, sizeof(check_ip), "ip addr show | grep '10.0.%d.1/24'", subnet_id);
+        if (run_command_quiet((char*[]){"sh", "-c", check_ip, NULL}) != 0) {
+            /* Not found, so it is free */
+            break;
+        }
+        subnet_id = (subnet_id % 250) + 1;
+    }
+
+    if (retries <= 0) {
+        ds_error("Failed to allocate free subnet for NAT mode (exhausted retries)");
+        return -1;
+    }
+
+    char host_ip[32], container_ip[32];
+    snprintf(host_ip, sizeof(host_ip), "10.0.%d.1/24", subnet_id);
+    snprintf(container_ip, sizeof(container_ip), "10.0.%d.2/24", subnet_id);
+    char gateway_ip[32];
+    snprintf(gateway_ip, sizeof(gateway_ip), "10.0.%d.1", subnet_id);
+
+    ds_log("Mode: NAT. Subnet: 10.0.%d.0/24", subnet_id);
+
+    /* 1. Create veth pair */
+    char *args_link[] = {"ip", "link", "add", veth_host, "type", "veth", "peer", "name", veth_peer, NULL};
+    if (run_command_quiet(args_link) != 0) {
+      ds_error("Failed to create veth pair: ip link add %s type veth peer name %s", veth_host, veth_peer);
+      return -1;
+    }
+
+    /* Helper macro for cleanup on failure */
+    #define CLEANUP_NAT_AND_RETURN(ret_code) \
+        do { \
+            char *args_del[] = {"ip", "link", "delete", veth_host, NULL}; \
+            run_command_quiet(args_del); \
+            return ret_code; \
+        } while (0)
+
+    /* 2. Configure Host Side */
+    char *args_host_up[] = {"ip", "link", "set", veth_host, "up", NULL};
+    if (run_command_quiet(args_host_up) != 0) {
+        ds_error("Failed to set %s up", veth_host);
+        CLEANUP_NAT_AND_RETURN(-1);
+    }
+
+    char *args_host_ip[] = {"ip", "addr", "add", host_ip, "dev", veth_host, NULL};
+    if (run_command_quiet(args_host_ip) != 0) {
+        ds_error("Failed to assign host IP %s to %s", host_ip, veth_host);
+        CLEANUP_NAT_AND_RETURN(-1);
+    }
+
+    /* 3. Enable NAT (Masquerade) on Host */
+    char subnet_cidr[32];
+    snprintf(subnet_cidr, sizeof(subnet_cidr), "10.0.%d.0/24", subnet_id);
+
+    char *args_nat[] = {"iptables", "-t", "nat", "-A", "POSTROUTING", "-s", subnet_cidr, "-j", "MASQUERADE", NULL};
+    if (run_command_quiet(args_nat) != 0) {
+        ds_error("Failed to set up NAT masquerade for %s", subnet_cidr);
+        CLEANUP_NAT_AND_RETURN(-1);
+    }
+
+    char *args_fwd[] = {"iptables", "-A", "FORWARD", "-i", veth_host, "-j", "ACCEPT", NULL};
+    if (run_command_quiet(args_fwd) != 0) {
+        ds_error("Failed to allow forwarding in on %s", veth_host);
+        /* Try to cleanup NAT rule */
+        char *args_nat_del[] = {"iptables", "-t", "nat", "-D", "POSTROUTING", "-s", subnet_cidr, "-j", "MASQUERADE", NULL};
+        run_command_quiet(args_nat_del);
+        CLEANUP_NAT_AND_RETURN(-1);
+    }
+
+    char *args_fwd2[] = {"iptables", "-A", "FORWARD", "-o", veth_host, "-j", "ACCEPT", NULL};
+    if (run_command_quiet(args_fwd2) != 0) {
+        ds_error("Failed to allow forwarding out on %s", veth_host);
+        char *args_nat_del[] = {"iptables", "-t", "nat", "-D", "POSTROUTING", "-s", subnet_cidr, "-j", "MASQUERADE", NULL};
+        run_command_quiet(args_nat_del);
+        char *args_fwd_del[] = {"iptables", "-D", "FORWARD", "-i", veth_host, "-j", "ACCEPT", NULL};
+        run_command_quiet(args_fwd_del);
+        CLEANUP_NAT_AND_RETURN(-1);
+    }
+
+    /* 4. Move Peer to Container Namespace */
+    char pid_str[16];
+    snprintf(pid_str, sizeof(pid_str), "%d", container_pid);
+    char *args_move[] = {"ip", "link", "set", veth_peer, "netns", pid_str, NULL};
+    if (run_command_quiet(args_move) != 0) {
+      ds_error("Failed to move interface %s to container PID %s", veth_peer, pid_str);
+      /* Cleanup all rules */
+      char *args_nat_del[] = {"iptables", "-t", "nat", "-D", "POSTROUTING", "-s", subnet_cidr, "-j", "MASQUERADE", NULL};
+      run_command_quiet(args_nat_del);
+      char *args_fwd_del[] = {"iptables", "-D", "FORWARD", "-i", veth_host, "-j", "ACCEPT", NULL};
+      run_command_quiet(args_fwd_del);
+      char *args_fwd2_del[] = {"iptables", "-D", "FORWARD", "-o", veth_host, "-j", "ACCEPT", NULL};
+      run_command_quiet(args_fwd2_del);
+      CLEANUP_NAT_AND_RETURN(-1);
+    }
+
+    /* 5. Configure Container Side (using fork + setns) */
+    pid_t worker = fork();
+    if (worker < 0) {
+        ds_error("fork failed during network setup: %s", strerror(errno));
+        return -1;
+    }
+    if (worker == 0) {
+        /* Child worker */
+        char ns_path[PATH_MAX];
+        snprintf(ns_path, sizeof(ns_path), "/proc/%d/ns/net", container_pid);
+        int fd = open(ns_path, O_RDONLY);
+        if (fd < 0) {
+             ds_error("Failed to open netns %s: %s", ns_path, strerror(errno));
+             exit(1);
+        }
+        if (setns(fd, CLONE_NEWNET) < 0) {
+             ds_error("Failed to enter netns: %s", strerror(errno));
+             exit(1);
+        }
+        close(fd);
+
+        /* Inside container namespace now */
+        char *cmd_rename[] = {"ip", "link", "set", veth_peer, "name", "eth0", NULL};
+        if (run_command_quiet(cmd_rename) != 0) {
+            ds_error("Failed to rename interface to eth0");
+            exit(1);
+        }
+
+        /* Set Fake MAC */
+        char mac[32];
+        if (generate_random_mac(mac) < 0) {
+            ds_error("Failed to generate random MAC");
+            exit(1);
+        }
+        ds_log("Assigned Virtual MAC: %s", mac);
+        char *cmd_mac[] = {"ip", "link", "set", "eth0", "address", mac, NULL};
+        if (run_command_quiet(cmd_mac) != 0) {
+            ds_error("Failed to set MAC address");
+            exit(1);
+        }
+
+        char *cmd_ip[] = {"ip", "addr", "add", container_ip, "dev", "eth0", NULL};
+        if (run_command_quiet(cmd_ip) != 0) {
+            ds_error("Failed to assign IP %s", container_ip);
+            exit(1);
+        }
+
+        char *cmd_up[] = {"ip", "link", "set", "eth0", "up", NULL};
+        if (run_command_quiet(cmd_up) != 0) {
+            ds_error("Failed to bring up eth0");
+            exit(1);
+        }
+
+        char *cmd_lo[] = {"ip", "link", "set", "lo", "up", NULL};
+        if (run_command_quiet(cmd_lo) != 0) {
+            ds_error("Failed to bring up lo");
+            exit(1);
+        }
+
+        char *cmd_gw[] = {"ip", "route", "add", "default", "via", gateway_ip, NULL};
+        if (run_command_quiet(cmd_gw) != 0) {
+            ds_error("Failed to add default route via %s", gateway_ip);
+            exit(1);
+        }
+
+        exit(0);
+    }
+    int status;
+    while (waitpid(worker, &status, 0) < 0) {
+        if (errno != EINTR) {
+            ds_error("waitpid failed: %s", strerror(errno));
+            return -1;
+        }
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        ds_error("Failed to configure container network interface (worker failed)");
+        return -1;
+    }
+
+  } else if (cfg->net_mode == DS_NET_MACVLAN) {
+    /* -----------------------------------------------------------------------
+     * Macvlan Mode: Bridge to physical interface
+     * ----------------------------------------------------------------------- */
+    ds_log("Mode: Macvlan (Bridge). Trying to get real LAN IP...");
+
+    char phys_if[32];
+    if (get_wlan_interface(phys_if, sizeof(phys_if)) < 0) {
+        ds_error("Could not find a suitable parent interface (wlan0/eth0) for Macvlan.");
+        return -1;
+    }
+    ds_log("Parent interface: %s", phys_if);
+
+    char mac_if[32];
+    snprintf(mac_if, sizeof(mac_if), "mac%d", container_pid);
+
+    char *args_link[] = {"ip", "link", "add", "link", phys_if, "name", mac_if, "type", "macvlan", "mode", "bridge", NULL};
+    if (run_command_quiet(args_link) != 0) {
+        ds_error("Failed to create macvlan interface %s on %s. (Driver might not support it)", mac_if, phys_if);
+        return -1;
+    }
+
+    /* Move to container */
+    char pid_str[16];
+    snprintf(pid_str, sizeof(pid_str), "%d", container_pid);
+    char *args_move[] = {"ip", "link", "set", mac_if, "netns", pid_str, NULL};
+    if (run_command_quiet(args_move) != 0) {
+        ds_error("Failed to move macvlan interface to container PID %s", pid_str);
+        char *args_del[] = {"ip", "link", "delete", mac_if, NULL};
+        run_command_quiet(args_del);
+        return -1;
+    }
+
+    /* Configure inside */
+    pid_t worker = fork();
+    if (worker < 0) {
+        ds_error("fork failed during macvlan setup");
+        return -1;
+    }
+    if (worker == 0) {
+        char ns_path[PATH_MAX];
+        snprintf(ns_path, sizeof(ns_path), "/proc/%d/ns/net", container_pid);
+        int fd = open(ns_path, O_RDONLY);
+        if (fd < 0 || setns(fd, CLONE_NEWNET) < 0) {
+            ds_error("Worker failed to enter netns");
+            exit(1);
+        }
+        close(fd);
+
+        char *cmd_rename[] = {"ip", "link", "set", mac_if, "name", "eth0", NULL};
+        if (run_command_quiet(cmd_rename) != 0) exit(1);
+
+        char mac[32];
+        if (generate_random_mac(mac) < 0) {
+            ds_error("Failed to generate random MAC");
+            exit(1);
+        }
+        ds_log("Assigned Virtual MAC: %s", mac);
+        char *cmd_mac[] = {"ip", "link", "set", "eth0", "address", mac, NULL};
+        if (run_command_quiet(cmd_mac) != 0) exit(1);
+
+        char *cmd_up[] = {"ip", "link", "set", "eth0", "up", NULL};
+        if (run_command_quiet(cmd_up) != 0) exit(1);
+
+        char *cmd_lo[] = {"ip", "link", "set", "lo", "up", NULL};
+        if (run_command_quiet(cmd_lo) != 0) exit(1);
+
+        exit(0);
+    }
+    int status;
+    while (waitpid(worker, &status, 0) < 0) {
+        if (errno != EINTR) {
+            ds_error("waitpid failed: %s", strerror(errno));
+            return -1;
+        }
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        ds_error("Macvlan setup worker returned error");
+        return -1;
+    } else {
+        ds_warn("Macvlan setup complete. You must run a DHCP client inside the container.");
+    }
   }
 
   return 0;
@@ -118,7 +474,7 @@ int fix_networking_rootfs(struct ds_config *cfg) {
 
   /* Link /etc/resolv.conf */
   unlink("/etc/resolv.conf");
-  symlink("/run/resolvconf/resolv.conf", "/etc/resolv.conf");
+  (void)symlink("/run/resolvconf/resolv.conf", "/etc/resolv.conf");
 
   /* 4. Android Network Groups */
   if (is_android()) {

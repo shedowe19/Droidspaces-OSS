@@ -25,6 +25,8 @@ data class ContainerInfo(
     val enableIPv6: Boolean = false,
     val enableAndroidStorage: Boolean = false,
     val enableHwAccess: Boolean = false,
+    val enableSensors: Boolean = false,
+    val networkMode: String = "host",
     val selinuxPermissive: Boolean = false,
     val volatileMode: Boolean = false,
     val bindMounts: List<BindMount> = emptyList(),
@@ -48,6 +50,8 @@ data class ContainerInfo(
         appendLine("enable_ipv6=${if (enableIPv6) "1" else "0"}")
         appendLine("enable_android_storage=${if (enableAndroidStorage) "1" else "0"}")
         appendLine("enable_hw_access=${if (enableHwAccess) "1" else "0"}")
+        appendLine("enable_sensors=${if (enableSensors) "1" else "0"}")
+        appendLine("network_mode=$networkMode")
         appendLine("selinux_permissive=${if (selinuxPermissive) "1" else "0"}")
         appendLine("volatile_mode=${if (volatileMode) "1" else "0"}")
         if (bindMounts.isNotEmpty()) {
@@ -209,6 +213,8 @@ object ContainerManager {
                 enableIPv6 = configMap["enable_ipv6"] == "1",
                 enableAndroidStorage = configMap["enable_android_storage"] == "1",
                 enableHwAccess = configMap["enable_hw_access"] == "1",
+                enableSensors = configMap["enable_sensors"] == "1",
+                networkMode = configMap["network_mode"] ?: "host",
                 selinuxPermissive = configMap["selinux_permissive"] == "1",
                 volatileMode = configMap["volatile_mode"] == "1",
                 bindMounts = bindMounts,

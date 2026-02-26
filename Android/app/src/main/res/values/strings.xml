@@ -155,8 +155,15 @@
     <string name="enable_ipv6_description">Enable IPv6 networking</string>
     <string name="android_storage">Android Storage</string>
     <string name="android_storage_description">Mount Android storage</string>
-    <string name="hardware_access">Hardware Access</string>
-    <string name="hardware_access_description">Full hardware access</string>
+    <string name="hardware_access">GPU / Hardware Access</string>
+    <string name="hardware_access_description">Enable GPU acceleration and hardware access</string>
+    <string name="enable_sensors">Enable Sensors</string>
+    <string name="enable_sensors_description">Expose battery and thermal sensors</string>
+    <string name="network_mode_title">Network Mode</string>
+    <string name="network_mode_description">Choose how the container connects to the network.</string>
+    <string name="network_mode_host">Host (Shared IP)</string>
+    <string name="network_mode_nat">NAT (Private IP / Fake MAC)</string>
+    <string name="network_mode_macvlan">Macvlan (Bridge)</string>
     <string name="selinux_permissive">SELinux Permissive</string>
     <string name="selinux_permissive_description">Set SELinux permissive</string>
     <string name="run_at_boot">Run at Boot</string>

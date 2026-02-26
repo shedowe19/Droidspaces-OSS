@@ -104,7 +104,7 @@ int bind_mount(const char *src, const char *tgt) {
        * This preserves UID/GID/mode so bind mounts behave like Docker:
        * the kernel overlays the source transparently. */
       mkdir(tgt, st_src.st_mode & 07777);
-      chown(tgt, st_src.st_uid, st_src.st_gid);
+      if (chown(tgt, st_src.st_uid, st_src.st_gid) < 0) { /* ignore */ }
     } else {
       write_file(tgt, ""); /* Create empty file as mount point */
     }
@@ -117,14 +117,33 @@ int bind_mount(const char *src, const char *tgt) {
  * /dev setup
  * ---------------------------------------------------------------------------*/
 
-int setup_dev(const char *rootfs, int hw_access) {
+static int update_gpu_node_permissions(const char *path, mode_t mode,
+                                       gid_t group) {
+  int updated = 0;
+  if (chmod(path, mode) == 0) {
+    updated = 1;
+  } else {
+    ds_warn("Failed to chmod GPU node %s: %s", path, strerror(errno));
+  }
+
+  if (group != (gid_t)-1) {
+    if (chown(path, -1, group) == 0) {
+      updated = 1;
+    } else {
+      ds_warn("Failed to chown GPU node %s: %s", path, strerror(errno));
+    }
+  }
+  return updated;
+}
+
+int setup_dev(const char *rootfs, struct ds_config *cfg) {
   char dev_path[PATH_MAX];
   snprintf(dev_path, sizeof(dev_path), "%s/dev", rootfs);
 
   /* Ensure the directory exists */
   mkdir(dev_path, 0755);
 
-  if (hw_access) {
+  if (cfg->hw_access) {
     /* If hw_access is enabled, we mount host's devtmpfs.
      * WARNING: This is a shared singleton. We MUST be careful. */
     if (domount("devtmpfs", dev_path, "devtmpfs", MS_NOSUID | MS_NOEXEC,
@@ -141,6 +160,79 @@ int setup_dev(const char *rootfs, int hw_access) {
         umount2(path, MNT_DETACH);
         force_unlink(path);
       }
+
+      /* GPU / Hardware Acceleration Fixes
+       * Scan for known GPU devices (Mali, Adreno, DMA heaps) and ensure
+       * they have correct permissions so non-root container users can access them.
+       * This is critical for Pixel devices (Mali) and others. */
+      DIR *dir = opendir(dev_path);
+      if (dir) {
+        struct dirent *entry;
+        int updated_gpu = 0;
+        while ((entry = readdir(dir)) != NULL) {
+          int match = 0;
+
+          /* Strict matching logic:
+           * - Prefix match: mali*, kgsl*, edgetpu*, video*
+           * - Exact match: dri, dma_heap, genlock, udmabuf
+           */
+          if (strncmp(entry->d_name, "mali", 4) == 0) match = 1;
+          else if (strncmp(entry->d_name, "kgsl", 4) == 0) match = 1;
+          else if (strncmp(entry->d_name, "edgetpu", 7) == 0) match = 1;
+          else if (strncmp(entry->d_name, "video", 5) == 0) match = 1;
+          else if (strcmp(entry->d_name, "dri") == 0) match = 1;
+          else if (strcmp(entry->d_name, "dma_heap") == 0) match = 1;
+          else if (strcmp(entry->d_name, "genlock") == 0) match = 1;
+          else if (strcmp(entry->d_name, "udmabuf") == 0) match = 1;
+
+          if (match) {
+            char full_path[PATH_MAX];
+            snprintf(full_path, sizeof(full_path), "%s/%s", dev_path,
+                     entry->d_name);
+
+            struct stat st;
+            /* Use lstat to check for symlinks/types safely */
+            if (lstat(full_path, &st) == 0) {
+              if (S_ISDIR(st.st_mode)) {
+                 /* Recursively chmod directory contents (single-level only).
+                  * We assume GPU device directories like /dev/dri or /dev/dma_heap
+                  * contain flat lists of device nodes. Deeply nested paths are not
+                  * processed. */
+                 DIR *sub = opendir(full_path);
+                 if (sub) {
+                   struct dirent *sub_e;
+                   while ((sub_e = readdir(sub)) != NULL) {
+                     if (sub_e->d_name[0] == '.') continue;
+                     char sub_p[PATH_MAX];
+                     snprintf(sub_p, sizeof(sub_p), "%s/%s", full_path, sub_e->d_name);
+
+                     struct stat sub_st;
+                     if (lstat(sub_p, &sub_st) == 0) {
+                       /* Only chmod character/block devices */
+                       if (S_ISCHR(sub_st.st_mode) || S_ISBLK(sub_st.st_mode)) {
+                         if (update_gpu_node_permissions(sub_p, cfg->gpu_mode,
+                                                         cfg->gpu_group))
+                           updated_gpu = 1;
+                       }
+                     }
+                   }
+                   closedir(sub);
+                 }
+              } else if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode)) {
+                 /* Only chmod character/block devices */
+                 if (update_gpu_node_permissions(full_path, cfg->gpu_mode,
+                                                 cfg->gpu_group))
+                   updated_gpu = 1;
+              }
+            }
+          }
+        }
+        closedir(dir);
+        if (updated_gpu) {
+          ds_log("GPU Access: Enabled permissions for detected GPU devices.");
+        }
+      }
+
     } else {
       ds_warn("Failed to mount devtmpfs, falling back to tmpfs");
       if (domount("none", dev_path, "tmpfs", MS_NOSUID | MS_NOEXEC,
@@ -155,7 +247,7 @@ int setup_dev(const char *rootfs, int hw_access) {
   }
 
   /* Create minimal set of device nodes (creates secure console/ptmx/etc.) */
-  return create_devices(rootfs, hw_access);
+  return create_devices(rootfs, cfg->hw_access);
 }
 
 int create_devices(const char *rootfs, int hw_access) {
@@ -228,13 +320,13 @@ int create_devices(const char *rootfs, int hw_access) {
   /* Standard symlinks */
   char tgt[PATH_MAX];
   snprintf(tgt, sizeof(tgt), "%s/dev/fd", rootfs);
-  symlink("/proc/self/fd", tgt);
+  if (symlink("/proc/self/fd", tgt) < 0) { /* ignore */ }
   snprintf(tgt, sizeof(tgt), "%s/dev/stdin", rootfs);
-  symlink("/proc/self/fd/0", tgt);
+  if (symlink("/proc/self/fd/0", tgt) < 0) { /* ignore */ }
   snprintf(tgt, sizeof(tgt), "%s/dev/stdout", rootfs);
-  symlink("/proc/self/fd/1", tgt);
+  if (symlink("/proc/self/fd/1", tgt) < 0) { /* ignore */ }
   snprintf(tgt, sizeof(tgt), "%s/dev/stderr", rootfs);
-  symlink("/proc/self/fd/2", tgt);
+  if (symlink("/proc/self/fd/2", tgt) < 0) { /* ignore */ }
 
   return 0;
 }

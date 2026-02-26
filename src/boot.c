@@ -69,7 +69,7 @@ int internal_boot(struct ds_config *cfg) {
   }
 
   /* 8. Setup /dev (device nodes, devtmpfs) */
-  if (setup_dev(".", cfg->hw_access) < 0) {
+  if (setup_dev(".", cfg) < 0) {
     ds_error("Failed to setup /dev.");
     return -1;
   }
@@ -142,6 +142,22 @@ int internal_boot(struct ds_config *cfg) {
                 MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL) < 0) {
       ds_warn("Failed to mount sysfs at sys/devices/virtual/net "
               "(networking may be limited)");
+    }
+  }
+
+  /* Expose sensors (battery/thermal) as RW bind mounts (pinned) */
+  if (cfg->sensors) {
+    ds_log("Sensors: Exposing battery and thermal info...");
+    const char *sensor_paths[] = {"sys/class/power_supply", "sys/class/thermal",
+                                  NULL};
+    for (int i = 0; sensor_paths[i]; i++) {
+      if (access(sensor_paths[i], F_OK) == 0) {
+        /* Pin it as RW mount so it survives the RO remount of parent /sys */
+        if (mount(sensor_paths[i], sensor_paths[i], NULL, MS_BIND | MS_REC,
+                  NULL) < 0) {
+          ds_warn("Failed to expose sensor path: %s", sensor_paths[i]);
+        }
+      }
     }
   }
 
@@ -251,7 +267,7 @@ int internal_boot(struct ds_config *cfg) {
 
     /* Sticky permissions again just in case systemd's TTYReset stripped them */
     fchmod(console_fd, 0620);
-    fchown(console_fd, 0, 5);
+    if (fchown(console_fd, 0, 5) < 0) { /* ignore */ }
     if (console_fd > 2)
       close(console_fd);
   }

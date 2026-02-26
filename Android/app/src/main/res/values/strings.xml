@@ -155,8 +155,8 @@
     <string name="enable_ipv6_description">Enable IPv6 networking</string>
     <string name="android_storage">Android Storage</string>
     <string name="android_storage_description">Mount Android storage</string>
-    <string name="hardware_access">Hardware Access</string>
-    <string name="hardware_access_description">Full hardware access (GPU, USB, etc.)</string>
+    <string name="hardware_access">GPU / Hardware Access</string>
+    <string name="hardware_access_description">Enable GPU acceleration and hardware access</string>
     <string name="enable_sensors">Enable Sensors</string>
     <string name="enable_sensors_description">Expose battery and thermal sensors</string>
     <string name="selinux_permissive">SELinux Permissive</string>

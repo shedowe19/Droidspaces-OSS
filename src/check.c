@@ -227,7 +227,8 @@ void print_gpu_check(void) {
   check_gpu_node("/dev/dma_heap/linux,cma", "CMA Heap");
 
   check_append("\n" C_BOLD "Summary:" C_RESET "\n");
-  check_append("  To use GPU in container, run with: " C_GREEN "--gpu" C_RESET "\n");
+  check_append("  To use GPU in container, enable " C_GREEN "GPU / Hardware Access" C_RESET " in the app,\n");
+  check_append("  or run with: " C_GREEN "--gpu" C_RESET " (alias: --hw-access)\n");
   check_append("  This will expose these devices and fix permissions automatically.\n\n");
 
   fwrite(check_buf, 1, check_buf_pos, stdout);

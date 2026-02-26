@@ -78,6 +78,13 @@ android {
                 keyAlias = "androiddebugkey"
                 keyPassword = "android"
             }
+            // Create a fallback release config that uses debug keys to prevent build failure
+            create("release") {
+                storeFile = getByName("debug").storeFile
+                storePassword = getByName("debug").storePassword
+                keyAlias = getByName("debug").keyAlias
+                keyPassword = getByName("debug").keyPassword
+            }
         }
     }
 
@@ -92,7 +99,8 @@ android {
             // Enable R8 full mode for maximum optimization
             isDebuggable = false
             isJniDebuggable = false
-            signingConfig = signingConfigs.getByName("release")
+            // Use release config if it exists (created above), otherwise fallback to debug (safe default)
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
         debug {
             // Disable minification in debug for faster builds

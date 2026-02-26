@@ -78,13 +78,6 @@ android {
                 keyAlias = "androiddebugkey"
                 keyPassword = "android"
             }
-            // Create a fallback release config that uses debug keys to prevent build failure
-            create("release") {
-                storeFile = getByName("debug").storeFile
-                storePassword = getByName("debug").storePassword
-                keyAlias = getByName("debug").keyAlias
-                keyPassword = getByName("debug").keyPassword
-            }
         }
     }
 

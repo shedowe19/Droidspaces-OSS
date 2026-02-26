@@ -476,7 +476,7 @@ int start_rootfs(struct ds_config *cfg) {
           kill(init_pid, SIGKILL);
           exit(EXIT_FAILURE);
       }
-      close(init_ready_pipe[0]);
+      /* Removed redundant close(init_ready_pipe[0]) */
 
       if (ds_configure_network_namespace(init_pid, cfg) < 0) {
         ds_error("Failed to configure network namespace. Killing container.");
@@ -532,7 +532,13 @@ int start_rootfs(struct ds_config *cfg) {
   close(init_ready_pipe[1]);
 
   /* Wait for Init (via Monitor's fork) to send child PID */
-  if (read(sync_pipe[0], &cfg->container_pid, sizeof(pid_t)) != sizeof(pid_t)) {
+  /* Loop to handle EINTR (signals) */
+  ssize_t n;
+  while ((n = read(sync_pipe[0], &cfg->container_pid, sizeof(pid_t))) < 0) {
+    if (errno != EINTR) break;
+  }
+
+  if (n != sizeof(pid_t)) {
     ds_error("Monitor failed to send container PID.");
     return -1;
   }

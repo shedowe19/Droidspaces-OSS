@@ -202,7 +202,8 @@ int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg) {
 
     char *args_host_ip[] = {"ip", "addr", "add", host_ip, "dev", veth_host, NULL};
     if (run_command_quiet(args_host_ip) != 0) {
-        ds_warn("Failed to assign host IP %s (collision?)", host_ip);
+        ds_error("Failed to assign host IP %s to %s", host_ip, veth_host);
+        return -1;
     }
 
     /* 3. Enable NAT (Masquerade) on Host */
@@ -217,12 +218,14 @@ int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg) {
 
     char *args_fwd[] = {"iptables", "-A", "FORWARD", "-i", veth_host, "-j", "ACCEPT", NULL};
     if (run_command_quiet(args_fwd) != 0) {
-        ds_warn("Failed to allow forwarding in on %s", veth_host);
+        ds_error("Failed to allow forwarding in on %s", veth_host);
+        return -1;
     }
 
     char *args_fwd2[] = {"iptables", "-A", "FORWARD", "-o", veth_host, "-j", "ACCEPT", NULL};
     if (run_command_quiet(args_fwd2) != 0) {
-        ds_warn("Failed to allow forwarding out on %s", veth_host);
+        ds_error("Failed to allow forwarding out on %s", veth_host);
+        return -1;
     }
 
     /* 4. Move Peer to Container Namespace */
@@ -302,7 +305,12 @@ int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg) {
         exit(0);
     }
     int status;
-    waitpid(worker, &status, 0);
+    while (waitpid(worker, &status, 0) < 0) {
+        if (errno != EINTR) {
+            ds_error("waitpid failed: %s", strerror(errno));
+            return -1;
+        }
+    }
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         ds_error("Failed to configure container network interface (worker failed)");
         return -1;
@@ -376,9 +384,15 @@ int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg) {
         exit(0);
     }
     int status;
-    waitpid(worker, &status, 0);
+    while (waitpid(worker, &status, 0) < 0) {
+        if (errno != EINTR) {
+            ds_error("waitpid failed: %s", strerror(errno));
+            return -1;
+        }
+    }
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        ds_warn("Macvlan setup worker returned error");
+        ds_error("Macvlan setup worker returned error");
+        return -1;
     } else {
         ds_warn("Macvlan setup complete. You must run a DHCP client inside the container.");
     }

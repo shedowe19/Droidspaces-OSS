@@ -334,12 +334,20 @@ int start_rootfs(struct ds_config *cfg) {
   }
 
   /* 4. Pipe for synchronization */
+  /* Main creates sync_pipe. Main reads [0]. Monitor forks Init.
+   * Init writes its PID to [1]. monitor_pipe is for Monitor->Init sync.
+   * init_ready_pipe is for Init->Monitor sync (NetNS ready). */
   int sync_pipe[2]; /* Init -> Monitor (sends PID) */
   if (pipe(sync_pipe) < 0)
     ds_die("pipe failed: %s", strerror(errno));
 
   int monitor_pipe[2]; /* Monitor -> Init (sends "Network Ready" signal) */
   if (pipe(monitor_pipe) < 0)
+    ds_die("pipe failed: %s", strerror(errno));
+
+  /* Init -> Monitor (sends "Network Unshared" signal) to sync race */
+  int init_ready_pipe[2];
+  if (pipe(init_ready_pipe) < 0)
     ds_die("pipe failed: %s", strerror(errno));
 
   /* 5. Configure host-side networking (NAT, ip_forward, DNS) BEFORE fork.
@@ -357,6 +365,7 @@ int start_rootfs(struct ds_config *cfg) {
     /* MONITOR PROCESS */
     close(sync_pipe[0]);
     close(monitor_pipe[0]); /* Write end only */
+    close(init_ready_pipe[1]); /* Read end only */
 
     if (setsid() < 0 && errno != EPERM) {
       /* Fatal only if it's not EPERM (which means already leader) */
@@ -409,38 +418,9 @@ int start_rootfs(struct ds_config *cfg) {
 
     if (init_pid == 0) {
       /* CONTAINER INIT */
-      close(sync_pipe[1]); /* Write end only (via dup/exec logic or direct usage?) Wait, sync_pipe is Init->Monitor. So Init writes to [1]. Monitor reads from [0]. */
-      /* actually, logic above says:
-         Monitor: close(sync_pipe[0]) -> This is wrong?
-         Let's re-read:
-         Parent (Main) reads from sync_pipe[0].
-         Monitor writes to sync_pipe[1]? No.
-         Monitor FORKS Init.
-         Init writes to sync_pipe[1].
-         Monitor waits for Init? No, Monitor waits for Init to exit.
-         Parent waits for Monitor to send PID?
-
-         Wait, existing logic:
-         - Main creates pipe.
-         - Main forks Monitor.
-         - Monitor forks Init.
-         - Init writes PID to pipe.
-         - Main reads PID from pipe.
-
-         So Sync Pipe connects Init -> Main directly?
-         Let's trace:
-         Main: pipe(sync_pipe). forks Monitor.
-         Monitor: close(sync_pipe[0]). forks Init.
-         Init: write(sync_pipe[1], pid).
-         Main: read(sync_pipe[0], pid).
-
-         So Sync Pipe bypasses Monitor for PID delivery.
-
-         BUT, for Network Sync, we need Monitor <-> Init.
-         So `monitor_pipe` is correct.
-       */
-
-      close(monitor_pipe[1]); /* Read end only */
+      close(sync_pipe[0]);
+      close(monitor_pipe[1]);
+      close(init_ready_pipe[0]);
 
       /* Unshare Network Namespace if requested */
       if (cfg->net_mode != DS_NET_HOST) {
@@ -450,12 +430,17 @@ int start_rootfs(struct ds_config *cfg) {
              exit(EXIT_FAILURE);
         }
         ds_log("INIT: Unshare success.");
-      }
 
-      /* Notify Main (and implicitly Monitor via timing?) that we are alive/unshared */
-      /* Actually, Main reads this. Monitor doesn't see it. */
-      ds_log("INIT: Writing PID %d to parent...", getpid());
-      if (write(sync_pipe[1], &init_pid, sizeof(pid_t)) < 0) { /* ignore */ }
+        /* Signal Monitor that netns is ready */
+        if (write(init_ready_pipe[1], "1", 1) < 0) { /* ignore */ }
+      }
+      close(init_ready_pipe[1]);
+
+      /* Notify Main that we are alive/unshared.
+       * Main reads this from sync_pipe[0]. Monitor does not see it. */
+      pid_t self_pid = getpid();
+      ds_log("INIT: Writing PID %d to parent...", self_pid);
+      if (write(sync_pipe[1], &self_pid, sizeof(pid_t)) < 0) { /* ignore */ }
       close(sync_pipe[1]);
 
       /* Wait for Monitor to configure network */
@@ -484,10 +469,14 @@ int start_rootfs(struct ds_config *cfg) {
 
     /* Configure network namespace if requested (from Monitor context) */
     if (cfg->net_mode != DS_NET_HOST) {
-      /* Wait a tiny bit for Init to unshare?
-         Init writes to sync_pipe then waits on monitor_pipe.
-         So Init is definitely blocked or running.
-         We can proceed. */
+      /* Wait for Init to signal that it has unshared CLONE_NEWNET */
+      char buf;
+      if (read(init_ready_pipe[0], &buf, 1) != 1) {
+          ds_error("Failed to sync with Init (netns creation)");
+          kill(init_pid, SIGKILL);
+          exit(EXIT_FAILURE);
+      }
+      close(init_ready_pipe[0]);
 
       if (ds_configure_network_namespace(init_pid, cfg) < 0) {
         ds_error("Failed to configure network namespace. Killing container.");
@@ -499,6 +488,7 @@ int start_rootfs(struct ds_config *cfg) {
       if (write(monitor_pipe[1], "1", 1) < 0) { /* ignore */ }
     }
     close(monitor_pipe[1]);
+    close(init_ready_pipe[0]);
 
     /* Ensure monitor is not sitting inside any mount point */
     if (chdir("/") < 0) { /* ignore */ }
@@ -538,6 +528,8 @@ int start_rootfs(struct ds_config *cfg) {
   close(sync_pipe[1]);
   close(monitor_pipe[0]);
   close(monitor_pipe[1]);
+  close(init_ready_pipe[0]);
+  close(init_ready_pipe[1]);
 
   /* Wait for Init (via Monitor's fork) to send child PID */
   if (read(sync_pipe[0], &cfg->container_pid, sizeof(pid_t)) != sizeof(pid_t)) {

@@ -112,18 +112,37 @@ static int generate_random_mac(char *buf) {
 }
 
 static int get_wlan_interface(char *buf, size_t size) {
-  /* Simple heuristic: check for wlan0, then swlan0, then eth0 */
-  if (access("/sys/class/net/wlan0", F_OK) == 0) {
-    safe_strncpy(buf, "wlan0", size);
-    return 0;
+  DIR *d = opendir("/sys/class/net");
+  if (!d) return -1;
+
+  struct dirent *entry;
+  char best_iface[64] = "";
+  int found = 0;
+
+  while ((entry = readdir(d)) != NULL) {
+    if (entry->d_name[0] == '.') continue;
+    if (strcmp(entry->d_name, "lo") == 0) continue;
+
+    /* Prioritize wireless */
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "/sys/class/net/%s/wireless", entry->d_name);
+    if (access(path, F_OK) == 0) {
+        safe_strncpy(buf, entry->d_name, size);
+        found = 1;
+        break;
+    }
+
+    /* Fallback to any non-loopback interface (e.g. eth0, rev_rmnet) */
+    if (best_iface[0] == '\0') {
+        safe_strncpy(best_iface, entry->d_name, sizeof(best_iface));
+    }
   }
-  if (access("/sys/class/net/swlan0", F_OK) == 0) {
-    safe_strncpy(buf, "swlan0", size);
-    return 0;
-  }
-  if (access("/sys/class/net/eth0", F_OK) == 0) {
-    safe_strncpy(buf, "eth0", size);
-    return 0;
+  closedir(d);
+
+  if (found) return 0;
+  if (best_iface[0] != '\0') {
+      safe_strncpy(buf, best_iface, size);
+      return 0;
   }
   return -1;
 }
@@ -144,7 +163,21 @@ int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg) {
      * NAT Mode: veth pair + iptables MASQUERADE
      * ----------------------------------------------------------------------- */
 
+    /* Allocator Logic: Collision avoidance */
     int subnet_id = (container_pid % 250) + 1;
+    /* Try to detect if this subnet is taken by scanning host interfaces.
+     * If taken, increment and retry up to 50 times. */
+    int retries = 50;
+    while (retries-- > 0) {
+        char check_ip[64];
+        snprintf(check_ip, sizeof(check_ip), "ip addr show | grep '10.0.%d.1/24'", subnet_id);
+        if (run_command_quiet((char*[]){"sh", "-c", check_ip, NULL}) != 0) {
+            /* Not found, so it is free */
+            break;
+        }
+        subnet_id = (subnet_id % 250) + 1;
+    }
+
     char host_ip[32], container_ip[32];
     snprintf(host_ip, sizeof(host_ip), "10.0.%d.1/24", subnet_id);
     snprintf(container_ip, sizeof(container_ip), "10.0.%d.2/24", subnet_id);
@@ -326,7 +359,10 @@ int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg) {
         if (run_command_quiet(cmd_rename) != 0) exit(1);
 
         char mac[32];
-        generate_random_mac(mac);
+        if (generate_random_mac(mac) < 0) {
+            ds_error("Failed to generate random MAC");
+            exit(1);
+        }
         ds_log("Assigned Virtual MAC: %s", mac);
         char *cmd_mac[] = {"ip", "link", "set", "eth0", "address", mac, NULL};
         if (run_command_quiet(cmd_mac) != 0) exit(1);

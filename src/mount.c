@@ -117,14 +117,14 @@ int bind_mount(const char *src, const char *tgt) {
  * /dev setup
  * ---------------------------------------------------------------------------*/
 
-int setup_dev(const char *rootfs, int hw_access) {
+int setup_dev(const char *rootfs, struct ds_config *cfg) {
   char dev_path[PATH_MAX];
   snprintf(dev_path, sizeof(dev_path), "%s/dev", rootfs);
 
   /* Ensure the directory exists */
   mkdir(dev_path, 0755);
 
-  if (hw_access) {
+  if (cfg->hw_access) {
     /* If hw_access is enabled, we mount host's devtmpfs.
      * WARNING: This is a shared singleton. We MUST be careful. */
     if (domount("devtmpfs", dev_path, "devtmpfs", MS_NOSUID | MS_NOEXEC,
@@ -144,12 +144,12 @@ int setup_dev(const char *rootfs, int hw_access) {
 
       /* GPU / Hardware Acceleration Fixes
        * Scan for known GPU devices (Mali, Adreno, DMA heaps) and ensure
-       * they have 0666 permissions so non-root container users can access them.
+       * they have correct permissions so non-root container users can access them.
        * This is critical for Pixel devices (Mali) and others. */
       DIR *dir = opendir(dev_path);
       if (dir) {
         struct dirent *entry;
-        int found_gpu = 0;
+        int updated_gpu = 0;
         while ((entry = readdir(dir)) != NULL) {
           int match = 0;
 
@@ -168,9 +168,9 @@ int setup_dev(const char *rootfs, int hw_access) {
             snprintf(full_path, sizeof(full_path), "%s/%s", dev_path,
                      entry->d_name);
 
-            /* Check if it's a directory (like /dev/dri or /dev/dma_heap) */
             struct stat st;
-            if (stat(full_path, &st) == 0) {
+            /* Use lstat to check for symlinks/types safely */
+            if (lstat(full_path, &st) == 0) {
               if (S_ISDIR(st.st_mode)) {
                  /* Recursively chmod directory contents (single-level only).
                   * We assume GPU device directories like /dev/dri or /dev/dma_heap
@@ -183,19 +183,38 @@ int setup_dev(const char *rootfs, int hw_access) {
                      if (sub_e->d_name[0] == '.') continue;
                      char sub_p[PATH_MAX];
                      snprintf(sub_p, sizeof(sub_p), "%s/%s", full_path, sub_e->d_name);
-                     chmod(sub_p, 0666);
+
+                     struct stat sub_st;
+                     if (lstat(sub_p, &sub_st) == 0) {
+                       /* Only chmod character/block devices */
+                       if (S_ISCHR(sub_st.st_mode) || S_ISBLK(sub_st.st_mode)) {
+                         if (chmod(sub_p, cfg->gpu_mode) == 0) updated_gpu = 1;
+                         else ds_warn("Failed to chmod GPU node %s: %s", sub_p, strerror(errno));
+
+                         if (cfg->gpu_group != (gid_t)-1) {
+                           if (chown(sub_p, -1, cfg->gpu_group) == 0) updated_gpu = 1;
+                           else ds_warn("Failed to chown GPU node %s: %s", sub_p, strerror(errno));
+                         }
+                       }
+                     }
                    }
                    closedir(sub);
                  }
-              } else {
-                 chmod(full_path, 0666);
+              } else if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode)) {
+                 /* Only chmod character/block devices */
+                 if (chmod(full_path, cfg->gpu_mode) == 0) updated_gpu = 1;
+                 else ds_warn("Failed to chmod GPU node %s: %s", full_path, strerror(errno));
+
+                 if (cfg->gpu_group != (gid_t)-1) {
+                   if (chown(full_path, -1, cfg->gpu_group) == 0) updated_gpu = 1;
+                   else ds_warn("Failed to chown GPU node %s: %s", full_path, strerror(errno));
+                 }
               }
-              found_gpu = 1;
             }
           }
         }
         closedir(dir);
-        if (found_gpu) {
+        if (updated_gpu) {
           ds_log("GPU Access: Enabled permissions for detected GPU devices.");
         }
       }
@@ -214,7 +233,7 @@ int setup_dev(const char *rootfs, int hw_access) {
   }
 
   /* Create minimal set of device nodes (creates secure console/ptmx/etc.) */
-  return create_devices(rootfs, hw_access);
+  return create_devices(rootfs, cfg->hw_access);
 }
 
 int create_devices(const char *rootfs, int hw_access) {

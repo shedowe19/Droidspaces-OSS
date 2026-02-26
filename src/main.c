@@ -47,6 +47,8 @@ void print_usage(void) {
       "  -d, --dns=SERVERS         Set custom DNS servers (comma separated)\n");
   printf("  -f, --foreground          Run in foreground (attach console)\n");
   printf("  -g, --gpu                 Enable GPU access (alias for --hw-access)\n");
+  printf("  --gpu-mode=MODE           Set GPU device permissions (default 0660)\n");
+  printf("  --gpu-group=GID           Set GPU device group owner\n");
   printf("  -s, --sensors             Expose battery/thermal sensors to container\n");
   printf("  -V, --volatile            Discard changes on exit (OverlayFS)\n");
   printf(
@@ -96,6 +98,8 @@ static int validate_kernel_version(void) {
 
 int main(int argc, char **argv) {
   struct ds_config cfg = {0};
+  cfg.gpu_mode = 0660;
+  cfg.gpu_group = (gid_t)-1;
   safe_strncpy(cfg.prog_name, argv[0], sizeof(cfg.prog_name));
 
   static struct option long_options[] = {
@@ -108,6 +112,8 @@ int main(int argc, char **argv) {
       {"foreground", no_argument, 0, 'f'},
       {"hw-access", no_argument, 0, 'H'},
       {"gpu", no_argument, 0, 'g'},
+      {"gpu-mode", required_argument, 0, 1001},
+      {"gpu-group", required_argument, 0, 1002},
       {"sensors", no_argument, 0, 's'},
       {"enable-ipv6", no_argument, 0, 'I'},
       {"enable-android-storage", no_argument, 0, 'S'},
@@ -169,6 +175,12 @@ int main(int argc, char **argv) {
       break;
     case 'g':
       cfg.hw_access = 1; /* Alias for hw-access */
+      break;
+    case 1001: /* --gpu-mode */
+      cfg.gpu_mode = strtoul(optarg, NULL, 8);
+      break;
+    case 1002: /* --gpu-group */
+      cfg.gpu_group = (gid_t)strtoul(optarg, NULL, 10);
       break;
     case 's':
       cfg.sensors = 1;

@@ -69,7 +69,7 @@ int internal_boot(struct ds_config *cfg) {
   }
 
   /* 8. Setup /dev (device nodes, devtmpfs) */
-  if (setup_dev(".", cfg->hw_access) < 0) {
+  if (setup_dev(".", cfg) < 0) {
     ds_error("Failed to setup /dev.");
     return -1;
   }

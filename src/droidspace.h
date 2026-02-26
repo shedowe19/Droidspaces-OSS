@@ -177,6 +177,8 @@ struct ds_config {
   /* Flags */
   int foreground;         /* --foreground */
   int hw_access;          /* --hw-access */
+  mode_t gpu_mode;        /* --gpu-mode (default 0660) */
+  gid_t gpu_group;        /* --gpu-group (default -1) */
   int sensors;            /* --sensors */
   int volatile_mode;      /* --volatile */
   int enable_ipv6;        /* --enable-ipv6 */
@@ -255,7 +257,7 @@ int android_seccomp_setup(int is_systemd);
 int domount(const char *src, const char *tgt, const char *fstype,
             unsigned long flags, const char *data);
 int bind_mount(const char *src, const char *tgt);
-int setup_dev(const char *rootfs, int hw_access);
+int setup_dev(const char *rootfs, struct ds_config *cfg);
 int create_devices(const char *rootfs, int hw_access);
 int setup_devpts(int hw_access);
 int setup_volatile_overlay(struct ds_config *cfg);

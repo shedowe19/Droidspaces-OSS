@@ -418,18 +418,30 @@ int start_rootfs(struct ds_config *cfg) {
 
     if (init_pid == 0) {
       /* CONTAINER INIT */
-      close(sync_pipe[0]);
+      /* sync_pipe[0] was already closed by Monitor before forking,
+       * but good practice to ensure we don't hold it if logic changes.
+       * However, we'll remove it here to be precise. */
+      /* close(sync_pipe[0]); */
       close(monitor_pipe[1]);
       close(init_ready_pipe[0]);
+
+      /* Close PTY masters inherited from parent to prevent hangs/leaks */
+      if (cfg->console.master >= 0) close(cfg->console.master);
+      for (int i = 0; i < cfg->tty_count; i++) {
+        if (cfg->ttys[i].master >= 0) close(cfg->ttys[i].master);
+      }
 
       /* Unshare Network Namespace if requested */
       if (cfg->net_mode != DS_NET_HOST) {
         ds_log("INIT: Unsharing network namespace...");
+        fflush(NULL); /* Ensure log is written before potential crash */
+
         if (unshare(CLONE_NEWNET) < 0) {
              ds_error("Failed to unshare network namespace: %s", strerror(errno));
              exit(EXIT_FAILURE);
         }
         ds_log("INIT: Unshare success.");
+        fflush(NULL);
 
         /* Signal Monitor that netns is ready */
         ssize_t n;
@@ -482,6 +494,12 @@ int start_rootfs(struct ds_config *cfg) {
     }
 
     /* MONITOR CONTINUES */
+    /* Close PTY masters (Main owns them, Monitor doesn't need them) */
+    if (cfg->console.master >= 0) close(cfg->console.master);
+    for (int i = 0; i < cfg->tty_count; i++) {
+      if (cfg->ttys[i].master >= 0) close(cfg->ttys[i].master);
+    }
+
     /* Write child PID to sync pipe? No, Init did that. */
     /* Monitor doesn't use sync_pipe. */
     close(sync_pipe[1]);

@@ -410,7 +410,7 @@ int start_rootfs(struct ds_config *cfg) {
     if (init_pid == 0) {
       /* CONTAINER INIT */
       close(sync_pipe[1]); /* Write end only (via dup/exec logic or direct usage?) Wait, sync_pipe is Init->Monitor. So Init writes to [1]. Monitor reads from [0]. */
-      /* Actually, logic above says:
+      /* actually, logic above says:
          Monitor: close(sync_pipe[0]) -> This is wrong?
          Let's re-read:
          Parent (Main) reads from sync_pipe[0].
@@ -635,4 +635,518 @@ int start_rootfs(struct ds_config *cfg) {
   }
 
   return 0;
+}
+
+int stop_rootfs(struct ds_config *cfg, int skip_unmount) {
+  pid_t pid;
+  if (check_status(cfg, &pid) < 0) {
+    return -1; /* Container not running — signal failure to caller */
+  }
+
+  ds_log("Stopping container '%s' (PID %d)...", cfg->container_name, pid);
+
+  /* If this is a restart (skip_unmount), create a restart marker so the
+   * background monitor knows to skip cleanup when the process exits. */
+  if (skip_unmount) {
+    char restart_marker[PATH_MAX];
+    restart_marker_path(cfg->container_name, restart_marker,
+                        sizeof(restart_marker));
+    write_file(restart_marker, "1");
+  }
+
+  /* Safe Metadata Capture: Read the mount path from the tracking file (.mount)
+   * into memory before we start the shutdown wait loop. This ensures we have
+   * the correct host path even if the tracking files are deleted by the monitor
+   * or another process during the timeout. */
+  if (cfg->img_mount_point[0] == '\0') {
+    read_mount_path(cfg->pidfile, cfg->img_mount_point,
+                    sizeof(cfg->img_mount_point));
+  }
+
+  /* 1. Try graceful shutdown with a "signal bucket" to support multiple init
+   * systems:
+   * - SIGRTMIN+3: Standard systemd poweroff signal in containers.
+   * - SIGTERM: Universal signal for graceful termination (Alpine/OpenRC reacts
+   * to this).
+   * - SIGPWR: Universal power failure signal (often used by LXC/SysVinit for
+   * shutdown).
+   */
+  kill(pid, DS_SIG_STOP);
+  kill(pid, SIGTERM);
+  kill(pid, SIGPWR);
+  ds_log("Waiting for graceful shutdown (this may take up to %d seconds)...",
+         DS_STOP_TIMEOUT);
+
+  /* 2. Wait for exit */
+  int stopped = 0;
+  for (int i = 0; i < DS_STOP_TIMEOUT * 5; i++) {
+    if (kill(pid, 0) < 0) {
+      if (errno == ESRCH) {
+        stopped = 1;
+        break;
+      }
+    }
+    usleep(DS_RETRY_DELAY_US);
+  }
+
+  /* 3. Force kill if still running */
+  int unkillable = 0;
+  if (!stopped) {
+    ds_warn("Graceful stop timed out, sending SIGKILL...");
+    kill(pid, SIGKILL);
+
+    /*
+     * Wait up to 5 seconds for the kernel to clean up the process.
+     * We don't use blocking waitpid() because we aren't the parent,
+     * and we want a timeout to prevent hanging on unkillable PIDs.
+     */
+    int killed = 0;
+    for (int j = 0; j < 25; j++) { /* 5 seconds total */
+      if (kill(pid, 0) < 0 && errno == ESRCH) {
+        killed = 1;
+        break;
+      }
+      usleep(200000); /* 200ms */
+    }
+
+    if (!killed) {
+      unkillable = 1;
+      ds_error("Container PID %d is in an unkillable state!", pid);
+      ds_warn("This often happens on old Android kernels due to zombie "
+              "processes.\nPlease restart your device to clear it.");
+      ds_warn("Proceeding with best-effort host cleanup (no sync)...");
+    }
+  }
+
+  /* 4. Firmware cleanup.
+   * Skip when unkillable — accessing zombie-held rootfs can hang. */
+  if (cfg->img_mount_point[0] && !unkillable)
+    firmware_path_remove_rootfs(cfg->img_mount_point);
+
+  /* 5. Complete resource cleanup. */
+  cleanup_container_resources(cfg, 0, skip_unmount, unkillable);
+
+  ds_log("Container '%s' stopped.", cfg->container_name);
+  return 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Namespace Entry (shared for enter and run)
+ * ---------------------------------------------------------------------------*/
+
+int enter_namespace(pid_t pid) {
+  /* Verify process is still alive before trying to enter namespaces */
+  if (kill(pid, 0) < 0) {
+    ds_error("Container PID %d is no longer alive.", pid);
+    return -1;
+  }
+
+  const char *ns_names[] = {"mnt", "uts", "ipc", "pid", "cgroup", "net"};
+  int ns_fds[6];
+  char path[PATH_MAX];
+
+  /* 1. Open all namespace descriptors first (CRITICAL: before any setns) */
+  for (int i = 0; i < 6; i++) {
+    snprintf(path, sizeof(path), "/proc/%d/ns/%s", pid, ns_names[i]);
+    ns_fds[i] = open(path, O_RDONLY);
+    if (ns_fds[i] < 0) {
+      if (i == 0) { /* mnt is mandatory */
+        ds_error("Failed to open mount namespace at %s: %s", path,
+                 strerror(errno));
+        /* Cleanup previous fds */
+        for (int j = 0; j < i; j++)
+          close(ns_fds[j]);
+        return -1;
+      }
+      if (errno != ENOENT) {
+        ds_warn("Optional namespace %s (%s) is missing: %s", ns_names[i], path,
+                strerror(errno));
+      }
+    }
+  }
+
+  /* 2. Enter namespaces */
+  for (int i = 0; i < 6; i++) {
+    if (ns_fds[i] < 0)
+      continue;
+
+    if (setns(ns_fds[i], 0) < 0) {
+      if (i == 0) { /* mnt is mandatory */
+        ds_error("setns(mnt) failed: %s", strerror(errno));
+        for (int j = i; j < 6; j++)
+          if (ns_fds[j] >= 0)
+            close(ns_fds[j]);
+        return -1;
+      }
+      ds_warn("setns(%s) failed (ignored): %s", ns_names[i], strerror(errno));
+    }
+    close(ns_fds[i]);
+  }
+
+  return 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Enter / Run
+ * ---------------------------------------------------------------------------*/
+
+int enter_rootfs(struct ds_config *cfg, const char *user) {
+  pid_t pid;
+  if (check_status(cfg, &pid) < 0)
+    return -1;
+
+  ds_log("Entering container '%s' as %s...", cfg->container_name,
+         user ? user : "root");
+
+  int sv[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0)
+    return -1;
+
+  pid_t child = fork();
+  if (child < 0) {
+    close(sv[0]);
+    close(sv[1]);
+    return -1;
+  }
+
+  if (child == 0) {
+    close(sv[0]);
+
+    /* CRITICAL: Physically attach process to the container's cgroup on the
+     * host. This ensures the process is inside the container's hierarchy
+     * subtree, which is required for D-Bus/logind inside to move it into
+     * session scopes.
+     */
+    ds_cgroup_attach(pid);
+
+    if (enter_namespace(pid) < 0)
+      exit(EXIT_FAILURE);
+
+    /* Allocate TTY INSIDE the container namespaces */
+    struct ds_tty_info tty;
+    if (ds_terminal_create(&tty) < 0)
+      exit(EXIT_FAILURE);
+
+    /* Send master FD back to parent */
+    if (ds_send_fd(sv[1], tty.master) < 0)
+      exit(EXIT_FAILURE);
+
+    close(tty.master);
+    close(sv[1]);
+
+    /* Must fork again to actually be in the new PID namespace */
+    pid_t shell_pid = fork();
+    if (shell_pid < 0)
+      exit(EXIT_FAILURE);
+    if (shell_pid == 0) {
+      /* Establish controlling terminal in the FINAL child process.
+       * This is critical: setsid() + TIOCSCTTY must happen in the
+       * process that will exec the shell, so that programs like
+       * 'login' can properly re-acquire the controlling terminal
+       * via their own setsid(). If we did this in the intermediate
+       * parent, login's setsid() would detach from the ctty but
+       * could never re-acquire it (the intermediate still owns it),
+       * causing a hang. This matches how LXC does it in
+       * lxc_terminal_prepare_login(). */
+      if (ds_terminal_make_controlling(tty.slave) < 0)
+        exit(EXIT_FAILURE);
+
+      if (ds_terminal_set_stdfds(tty.slave) < 0)
+        exit(EXIT_FAILURE);
+
+      if (tty.slave > STDERR_FILENO)
+        close(tty.slave);
+
+      if (chdir("/") < 0)
+        exit(EXIT_FAILURE);
+
+      setup_container_env();
+      setenv("LANG", "C.UTF-8", 1);
+      load_etc_environment();
+
+      extern char **environ;
+
+      if (user && user[0]) {
+        char *shell_argv[] = {"su", "-l", (char *)(uintptr_t)user, NULL};
+        execve("/bin/su", shell_argv, environ);
+        execve("/usr/bin/su", shell_argv, environ);
+      }
+
+      /* Try shells in order */
+      const char *shells[] = {"/bin/bash", "/bin/ash", "/bin/sh", NULL};
+      for (int i = 0; shells[i]; i++) {
+        if (access(shells[i], X_OK) == 0) {
+          const char *sh_name = strrchr(shells[i], '/');
+          sh_name = sh_name ? sh_name + 1 : shells[i];
+          char *shell_argv[] = {(char *)(uintptr_t)sh_name, "-l", NULL};
+          execve(shells[i], shell_argv, environ);
+        }
+      }
+
+      ds_error("Failed to find any usable shell");
+      exit(EXIT_FAILURE);
+    }
+    /* Intermediate: close slave fd we no longer need, wait for shell */
+    close(tty.slave);
+    waitpid(shell_pid, NULL, 0);
+    exit(EXIT_SUCCESS);
+  }
+
+  close(sv[1]);
+
+  /* Receive native PTY master from child */
+  int master_fd = ds_recv_fd(sv[0]);
+  close(sv[0]);
+
+  if (master_fd < 0) {
+    ds_error("Failed to receive PTY master from child");
+    waitpid(child, NULL, 0);
+    return -1;
+  }
+
+  /* Synchronize window size BEFORE starting setup to avoid race with child
+   * exec. This ensures htop/nano see the correct size immediately upon startup.
+   */
+  if (isatty(STDIN_FILENO)) {
+    struct winsize ws;
+    if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == 0)
+      ioctl(master_fd, TIOCSWINSZ, &ws);
+  }
+
+  /* Parent: setup host terminal and proxy I/O */
+  struct termios old_tios;
+  int has_tty = (ds_setup_tios(STDIN_FILENO, &old_tios) == 0);
+
+  ds_terminal_proxy(master_fd);
+
+  if (has_tty) {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_tios);
+  }
+
+  close(master_fd);
+  waitpid(child, NULL, 0);
+  return 0;
+}
+
+int run_in_rootfs(struct ds_config *cfg, int argc, char **argv) {
+  (void)argc;
+  pid_t pid;
+  if (check_status(cfg, &pid) < 0)
+    return -1;
+
+  /* Removed verbose status log to allow raw output stream */
+
+  pid_t child = fork();
+  if (child < 0)
+    return -1;
+
+  if (child == 0) {
+    if (enter_namespace(pid) < 0)
+      exit(EXIT_FAILURE);
+
+    pid_t cmd_pid = fork();
+    if (cmd_pid < 0)
+      exit(EXIT_FAILURE);
+    if (cmd_pid == 0) {
+      if (chdir("/") < 0)
+        exit(EXIT_FAILURE);
+
+      setup_container_env();
+      load_etc_environment();
+
+      /* If single argument with spaces, run via /bin/sh -c */
+      if (argv[1] == NULL && strchr(argv[0], ' ') != NULL) {
+        char *shell_argv[] = {"/bin/sh", "-c", argv[0], NULL};
+        execvp("/bin/sh", shell_argv);
+      } else {
+        execvp(argv[0], argv);
+      }
+
+      ds_error("Failed to execute command: %s", strerror(errno));
+      exit(EXIT_FAILURE);
+    }
+
+    int status;
+    waitpid(cmd_pid, &status, 0);
+    exit(WIFEXITED(status) ? WEXITSTATUS(status) : EXIT_FAILURE);
+  }
+
+  int status;
+  waitpid(child, &status, 0);
+  return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+/* ---------------------------------------------------------------------------
+ * Other operations
+ * ---------------------------------------------------------------------------*/
+
+static const char *get_architecture(void) {
+  static struct utsname uts;
+  if (uname(&uts) != 0)
+    return "unknown";
+
+  if (strcmp(uts.machine, "x86_64") == 0)
+    return "x86_64";
+  if (strcmp(uts.machine, "aarch64") == 0 || strcmp(uts.machine, "arm64") == 0)
+    return "aarch64";
+  if (strncmp(uts.machine, "arm", 3) == 0)
+    return "arm";
+  if (strcmp(uts.machine, "i686") == 0 || strcmp(uts.machine, "i386") == 0)
+    return "x86";
+  return uts.machine;
+}
+
+static void parse_pretty_name(FILE *fp, char *buf, size_t size) {
+  char line[512];
+  while (fgets(line, sizeof(line), fp)) {
+    if (strncmp(line, "PRETTY_NAME=", 12) == 0) {
+      char *val = line + 12;
+      size_t len = strlen(val);
+      while (len > 0 && (val[len - 1] == '\n' || val[len - 1] == '"'))
+        val[--len] = '\0';
+      if (val[0] == '"') {
+        val++;
+        len--;
+      }
+      if (len >= size)
+        len = size - 1;
+      snprintf(buf, size, "%.*s", (int)len, val);
+      return;
+    }
+  }
+}
+
+static void get_container_os_pretty(pid_t pid, char *buf, size_t size) {
+  if (!buf || size == 0)
+    return;
+  buf[0] = '\0';
+
+  char path[PATH_MAX];
+  if (build_proc_root_path(pid, "/etc/os-release", path, sizeof(path)) != 0)
+    return;
+
+  FILE *fp = fopen(path, "r");
+  if (!fp)
+    return;
+
+  parse_pretty_name(fp, buf, size);
+  fclose(fp);
+}
+
+static void get_os_pretty_from_path(const char *osrelease_path, char *buf,
+                                    size_t size) {
+  if (!buf || size == 0)
+    return;
+  buf[0] = '\0';
+
+  FILE *fp = fopen(osrelease_path, "r");
+  if (!fp)
+    return;
+
+  parse_pretty_name(fp, buf, size);
+  fclose(fp);
+}
+
+int show_info(struct ds_config *cfg, int trust_cfg_pid) {
+  /* Host info */
+  const char *host = is_android() ? "Android" : "Linux";
+  const char *arch = get_architecture();
+  printf("\n" C_GREEN "Host:" C_RESET " %s %s\n", host, arch);
+
+  /* Case 1: No container name specified */
+  if (cfg->container_name[0] == '\0') {
+    char first_name[256];
+    int count = count_running_containers(first_name, sizeof(first_name));
+
+    if (count == 0) {
+      printf("\n" C_YELLOW "Container:" C_RESET " No containers running.\n\n");
+      return 0;
+    }
+
+    if (count == 1) {
+      /* Auto-resolve to the only running container */
+      safe_strncpy(cfg->container_name, first_name,
+                   sizeof(cfg->container_name));
+      resolve_pidfile_from_name(first_name, cfg->pidfile, sizeof(cfg->pidfile));
+    } else {
+      /* Multiple containers running, show list */
+      printf("\n" C_YELLOW "Multiple containers running:" C_RESET "\n");
+      show_containers();
+      printf("\nUse '" C_GREEN "--name <NAME> info" C_RESET
+             "' for detailed information.\n\n");
+      return 0;
+    }
+  }
+
+  /* Case 2: Specific name specified or auto-resolved */
+  if (cfg->pidfile[0] == '\0' && cfg->container_name[0] != '\0') {
+    resolve_pidfile_from_name(cfg->container_name, cfg->pidfile,
+                              sizeof(cfg->pidfile));
+  }
+
+  pid_t pid = 0;
+  if (trust_cfg_pid && cfg->container_pid > 0) {
+    /* Trust the PID we just got from the sync pipe.
+     * We assume it's running because parent waited for boot marker. */
+    pid = cfg->container_pid;
+  } else {
+    /* For other calls (e.g., info command), read and validate from pidfile. */
+    is_container_running(cfg, &pid);
+  }
+
+  printf("\n" C_GREEN "Container:" C_RESET " %s (%s)\n", cfg->container_name,
+         pid > 0 ? "RUNNING" : "STOPPED");
+
+  if (pid > 0) {
+    printf("  PID: %d\n", pid);
+
+    char pretty[256];
+    get_container_os_pretty(pid, pretty, sizeof(pretty));
+    if (pretty[0])
+      printf("  OS: %s\n", pretty);
+
+    printf("\n" C_GREEN "Features:" C_RESET "\n");
+
+    /* SELinux */
+    if (access("/sys/fs/selinux/enforce", R_OK) == 0) {
+      const char *sel =
+          android_get_selinux_status() == 0 ? "Permissive" : "Enforcing";
+      printf("  SELinux: %s\n", sel);
+    }
+
+    /* IPv6 */
+    printf("  IPv6: %s\n",
+           detect_ipv6_in_container(pid) ? "enabled" : "disabled");
+
+    /* Android storage */
+    printf("  Android storage: %s\n",
+           detect_android_storage_in_container(pid) ? "enabled" : "disabled");
+
+    /* HW access */
+    int hw = detect_hw_access_in_container(pid);
+    if (hw)
+      printf("  " C_RED "HW / GPU access:" C_RESET " enabled\n");
+    else
+      printf("  HW / GPU access: disabled\n");
+  } else {
+    /* Best effort: read os-release from rootfs path */
+    if (cfg->rootfs_path[0]) {
+      char osr_path[PATH_MAX];
+      snprintf(osr_path, sizeof(osr_path), "%.4070s/etc/os-release",
+               cfg->rootfs_path);
+      char pretty[256];
+      get_os_pretty_from_path(osr_path, pretty, sizeof(pretty));
+      if (pretty[0])
+        printf("  Rootfs OS: %s\n", pretty);
+    }
+  }
+  printf("\n");
+
+  return 0;
+}
+
+int restart_rootfs(struct ds_config *cfg) {
+  ds_log("Restarting container %s...", cfg->container_name);
+  stop_rootfs(cfg, 1); /* skip unmount to keep rootfs.img attached */
+  return start_rootfs(cfg);
 }

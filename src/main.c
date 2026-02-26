@@ -195,7 +195,7 @@ int main(int argc, char **argv) {
       errno = 0;
       unsigned long val = strtoul(optarg, &endptr, 10);
       if (errno != 0 || endptr == optarg || *endptr != '\0' ||
-          val > (unsigned long)(gid_t)-1 || (gid_t)val == (gid_t)-1) {
+          (unsigned long)(gid_t)val != val || (gid_t)val == (gid_t)-1) {
         ds_error("Invalid --gpu-group: %s (must be valid GID)", optarg);
         return 1;
       }

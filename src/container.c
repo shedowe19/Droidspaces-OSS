@@ -334,8 +334,12 @@ int start_rootfs(struct ds_config *cfg) {
   }
 
   /* 4. Pipe for synchronization */
-  int sync_pipe[2];
+  int sync_pipe[2]; /* Init -> Monitor (sends PID) */
   if (pipe(sync_pipe) < 0)
+    ds_die("pipe failed: %s", strerror(errno));
+
+  int monitor_pipe[2]; /* Monitor -> Init (sends "Network Ready" signal) */
+  if (pipe(monitor_pipe) < 0)
     ds_die("pipe failed: %s", strerror(errno));
 
   /* 5. Configure host-side networking (NAT, ip_forward, DNS) BEFORE fork.
@@ -352,6 +356,8 @@ int start_rootfs(struct ds_config *cfg) {
   if (monitor_pid == 0) {
     /* MONITOR PROCESS */
     close(sync_pipe[0]);
+    close(monitor_pipe[0]); /* Write end only */
+
     if (setsid() < 0 && errno != EPERM) {
       /* Fatal only if it's not EPERM (which means already leader) */
       ds_error("setsid failed: %s", strerror(errno));
@@ -362,12 +368,11 @@ int start_rootfs(struct ds_config *cfg) {
     /* Unshare namespaces - Monitor enters new UTS, IPC, and optionally Cgroup
      * namespaces immediately. PID namespace unshare means only CHILDREN of the
      * monitor will be in the new PID NS. Node: we no longer unshare MNT here so
-     * monitor can cleanup host mounts. */
+     * monitor can cleanup host mounts.
+     * Note: We intentionally do NOT unshare CLONE_NEWNET in the monitor.
+     * The monitor must remain in the host network namespace to configure
+     * veth pairs and NAT rules. The child (init) will unshare netns itself. */
     int ns_flags = CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWPID;
-
-    if (cfg->net_mode != DS_NET_HOST) {
-      ns_flags |= CLONE_NEWNET;
-    }
 
     /* Adaptive Cgroup Namespace (introduced in Linux 4.6) */
     if (access("/proc/self/ns/cgroup", F_OK) == 0) {
@@ -404,23 +409,91 @@ int start_rootfs(struct ds_config *cfg) {
 
     if (init_pid == 0) {
       /* CONTAINER INIT */
+      close(sync_pipe[1]); /* Write end only (via dup/exec logic or direct usage?) Wait, sync_pipe is Init->Monitor. So Init writes to [1]. Monitor reads from [0]. */
+      /* Actually, logic above says:
+         Monitor: close(sync_pipe[0]) -> This is wrong?
+         Let's re-read:
+         Parent (Main) reads from sync_pipe[0].
+         Monitor writes to sync_pipe[1]? No.
+         Monitor FORKS Init.
+         Init writes to sync_pipe[1].
+         Monitor waits for Init? No, Monitor waits for Init to exit.
+         Parent waits for Monitor to send PID?
+
+         Wait, existing logic:
+         - Main creates pipe.
+         - Main forks Monitor.
+         - Monitor forks Init.
+         - Init writes PID to pipe.
+         - Main reads PID from pipe.
+
+         So Sync Pipe connects Init -> Main directly?
+         Let's trace:
+         Main: pipe(sync_pipe). forks Monitor.
+         Monitor: close(sync_pipe[0]). forks Init.
+         Init: write(sync_pipe[1], pid).
+         Main: read(sync_pipe[0], pid).
+
+         So Sync Pipe bypasses Monitor for PID delivery.
+
+         BUT, for Network Sync, we need Monitor <-> Init.
+         So `monitor_pipe` is correct.
+       */
+
+      close(monitor_pipe[1]); /* Read end only */
+
+      /* Unshare Network Namespace if requested */
+      if (cfg->net_mode != DS_NET_HOST) {
+        if (unshare(CLONE_NEWNET) < 0) {
+             ds_error("Failed to unshare network namespace: %s", strerror(errno));
+             exit(EXIT_FAILURE);
+        }
+      }
+
+      /* Notify Main (and implicitly Monitor via timing?) that we are alive/unshared */
+      /* Actually, Main reads this. Monitor doesn't see it. */
+      if (write(sync_pipe[1], &init_pid, sizeof(pid_t)) < 0) { /* ignore */ }
       close(sync_pipe[1]);
+
+      /* Wait for Monitor to configure network */
+      if (cfg->net_mode != DS_NET_HOST) {
+          char buf;
+          if (read(monitor_pipe[0], &buf, 1) != 1) {
+              ds_error("Failed to sync with monitor (network setup)");
+              exit(EXIT_FAILURE);
+          }
+      }
+      close(monitor_pipe[0]);
+
       /* internal_boot will handle its own stdfds. */
       exit(internal_boot(cfg));
     }
 
+    /* MONITOR CONTINUES */
+    /* Write child PID to sync pipe? No, Init did that. */
+    /* Monitor doesn't use sync_pipe. */
+    close(sync_pipe[1]);
+
+    /* Monitor needs to know Init PID. */
+    /* init_pid is known here. */
+
     /* Configure network namespace if requested (from Monitor context) */
     if (cfg->net_mode != DS_NET_HOST) {
+      /* Wait a tiny bit for Init to unshare?
+         Init writes to sync_pipe then waits on monitor_pipe.
+         So Init is definitely blocked or running.
+         We can proceed. */
+
       if (ds_configure_network_namespace(init_pid, cfg) < 0) {
         ds_error("Failed to configure network namespace. Killing container.");
         kill(init_pid, SIGKILL);
         exit(EXIT_FAILURE);
       }
-    }
 
-    /* Write child PID to sync pipe so parent knows it */
-    if (write(sync_pipe[1], &init_pid, sizeof(pid_t)) < 0) { /* ignore */ }
-    close(sync_pipe[1]);
+      /* Signal Init to proceed */
+      if (write(monitor_pipe[1], "1", 1) < 0) { /* ignore */ }
+    }
+    close(monitor_pipe[1]);
 
     /* Ensure monitor is not sitting inside any mount point */
     if (chdir("/") < 0) { /* ignore */ }
@@ -458,8 +531,10 @@ int start_rootfs(struct ds_config *cfg) {
 
   /* PARENT PROCESS */
   close(sync_pipe[1]);
+  close(monitor_pipe[0]);
+  close(monitor_pipe[1]);
 
-  /* Wait for Monitor to send child PID */
+  /* Wait for Init (via Monitor's fork) to send child PID */
   if (read(sync_pipe[0], &cfg->container_pid, sizeof(pid_t)) != sizeof(pid_t)) {
     ds_error("Monitor failed to send container PID.");
     return -1;

@@ -26,6 +26,7 @@ import com.droidspaces.app.ui.util.ClearFocusOnClickOutside
 import com.droidspaces.app.ui.util.FocusUtils
 import androidx.compose.foundation.clickable
 import com.droidspaces.app.ui.component.ToggleCard
+import com.droidspaces.app.ui.component.NetworkModeSelector
 import com.droidspaces.app.util.ContainerInfo
 import com.droidspaces.app.util.ContainerManager
 import com.droidspaces.app.util.SystemInfoManager
@@ -431,74 +432,13 @@ fun EditContainerScreen(
                 }
             )
 
-            // Network Mode Selection
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Wifi,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column {
-                            Text(
-                                text = "Network Mode",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "Choose how the container connects to the network.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    val modes = listOf(
-                        "host" to "Host (Shared IP)",
-                        "nat" to "NAT (Private IP / Fake MAC)",
-                        "macvlan" to "Macvlan (Bridge)"
-                    )
-
-                    modes.forEach { (mode, label) ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                                .clickable {
-                                    clearFocus()
-                                    networkMode = mode
-                                }
-                        ) {
-                            RadioButton(
-                                selected = (networkMode == mode),
-                                onClick = {
-                                    clearFocus()
-                                    networkMode = mode
-                                }
-                            )
-                            Text(
-                                text = label,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(start = 8.dp)
-                            )
-                        }
-                    }
+            NetworkModeSelector(
+                networkMode = networkMode,
+                onModeSelected = {
+                    clearFocus()
+                    networkMode = it
                 }
-            }
+            )
 
             ToggleCard(
                 icon = Icons.Default.Security,

@@ -50,6 +50,8 @@ void print_usage(void) {
   printf("  --gpu-mode=MODE           Set GPU device permissions (default 0660)\n");
   printf("  --gpu-group=GID           Set GPU device group owner\n");
   printf("  -s, --sensors             Expose battery/thermal sensors to container\n");
+  printf(
+      "  -N, --network-mode=MODE   Set network mode: host (default), nat, macvlan\n");
   printf("  -V, --volatile            Discard changes on exit (OverlayFS)\n");
   printf(
       "  -B, --bind-mount=SRC:DEST Bind mount host directory into container\n");
@@ -136,7 +138,7 @@ int main(int argc, char **argv) {
    */
   const char *discovered_cmd = NULL;
   int temp_optind = optind;
-  while (getopt_long(argc, argv, "+r:i:n:p:h:d:fHISPvVB:gs", long_options,
+  while (getopt_long(argc, argv, "+r:i:n:p:h:d:fHISPvVB:gsN:", long_options,
                      NULL) != -1)
     ;
   if (optind < argc)
@@ -193,7 +195,7 @@ int main(int argc, char **argv) {
       errno = 0;
       unsigned long val = strtoul(optarg, &endptr, 10);
       if (errno != 0 || endptr == optarg || *endptr != '\0' ||
-          val > (unsigned long)(gid_t)-1) {
+          val > (unsigned long)(gid_t)-1 || (gid_t)val == (gid_t)-1) {
         ds_error("Invalid --gpu-group: %s (must be valid GID)", optarg);
         return 1;
       }

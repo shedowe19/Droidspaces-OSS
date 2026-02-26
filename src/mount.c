@@ -104,7 +104,7 @@ int bind_mount(const char *src, const char *tgt) {
        * This preserves UID/GID/mode so bind mounts behave like Docker:
        * the kernel overlays the source transparently. */
       mkdir(tgt, st_src.st_mode & 07777);
-      chown(tgt, st_src.st_uid, st_src.st_gid);
+      if (chown(tgt, st_src.st_uid, st_src.st_gid) < 0) { /* ignore */ }
     } else {
       write_file(tgt, ""); /* Create empty file as mount point */
     }
@@ -317,13 +317,13 @@ int create_devices(const char *rootfs, int hw_access) {
   /* Standard symlinks */
   char tgt[PATH_MAX];
   snprintf(tgt, sizeof(tgt), "%s/dev/fd", rootfs);
-  symlink("/proc/self/fd", tgt);
+  if (symlink("/proc/self/fd", tgt) < 0) { /* ignore */ }
   snprintf(tgt, sizeof(tgt), "%s/dev/stdin", rootfs);
-  symlink("/proc/self/fd/0", tgt);
+  if (symlink("/proc/self/fd/0", tgt) < 0) { /* ignore */ }
   snprintf(tgt, sizeof(tgt), "%s/dev/stdout", rootfs);
-  symlink("/proc/self/fd/1", tgt);
+  if (symlink("/proc/self/fd/1", tgt) < 0) { /* ignore */ }
   snprintf(tgt, sizeof(tgt), "%s/dev/stderr", rootfs);
-  symlink("/proc/self/fd/2", tgt);
+  if (symlink("/proc/self/fd/2", tgt) < 0) { /* ignore */ }
 
   return 0;
 }

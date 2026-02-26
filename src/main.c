@@ -176,12 +176,29 @@ int main(int argc, char **argv) {
     case 'g':
       cfg.hw_access = 1; /* Alias for hw-access */
       break;
-    case 1001: /* --gpu-mode */
-      cfg.gpu_mode = strtoul(optarg, NULL, 8);
+    case 1001: { /* --gpu-mode */
+      char *endptr;
+      errno = 0;
+      unsigned long val = strtoul(optarg, &endptr, 8);
+      if (errno != 0 || endptr == optarg || *endptr != '\0' || val > 0777) {
+        ds_error("Invalid --gpu-mode: %s (must be octal 0-0777)", optarg);
+        return 1;
+      }
+      cfg.gpu_mode = (mode_t)val;
       break;
-    case 1002: /* --gpu-group */
-      cfg.gpu_group = (gid_t)strtoul(optarg, NULL, 10);
+    }
+    case 1002: { /* --gpu-group */
+      char *endptr;
+      errno = 0;
+      unsigned long val = strtoul(optarg, &endptr, 10);
+      if (errno != 0 || endptr == optarg || *endptr != '\0' ||
+          val > (unsigned long)(gid_t)-1) {
+        ds_error("Invalid --gpu-group: %s (must be valid GID)", optarg);
+        return 1;
+      }
+      cfg.gpu_group = (gid_t)val;
       break;
+    }
     case 's':
       cfg.sensors = 1;
       break;

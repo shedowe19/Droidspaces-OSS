@@ -117,6 +117,25 @@ int bind_mount(const char *src, const char *tgt) {
  * /dev setup
  * ---------------------------------------------------------------------------*/
 
+static int update_gpu_node_permissions(const char *path, mode_t mode,
+                                       gid_t group) {
+  int updated = 0;
+  if (chmod(path, mode) == 0) {
+    updated = 1;
+  } else {
+    ds_warn("Failed to chmod GPU node %s: %s", path, strerror(errno));
+  }
+
+  if (group != (gid_t)-1) {
+    if (chown(path, -1, group) == 0) {
+      updated = 1;
+    } else {
+      ds_warn("Failed to chown GPU node %s: %s", path, strerror(errno));
+    }
+  }
+  return updated;
+}
+
 int setup_dev(const char *rootfs, struct ds_config *cfg) {
   char dev_path[PATH_MAX];
   snprintf(dev_path, sizeof(dev_path), "%s/dev", rootfs);
@@ -188,13 +207,9 @@ int setup_dev(const char *rootfs, struct ds_config *cfg) {
                      if (lstat(sub_p, &sub_st) == 0) {
                        /* Only chmod character/block devices */
                        if (S_ISCHR(sub_st.st_mode) || S_ISBLK(sub_st.st_mode)) {
-                         if (chmod(sub_p, cfg->gpu_mode) == 0) updated_gpu = 1;
-                         else ds_warn("Failed to chmod GPU node %s: %s", sub_p, strerror(errno));
-
-                         if (cfg->gpu_group != (gid_t)-1) {
-                           if (chown(sub_p, -1, cfg->gpu_group) == 0) updated_gpu = 1;
-                           else ds_warn("Failed to chown GPU node %s: %s", sub_p, strerror(errno));
-                         }
+                         if (update_gpu_node_permissions(sub_p, cfg->gpu_mode,
+                                                         cfg->gpu_group))
+                           updated_gpu = 1;
                        }
                      }
                    }
@@ -202,13 +217,9 @@ int setup_dev(const char *rootfs, struct ds_config *cfg) {
                  }
               } else if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode)) {
                  /* Only chmod character/block devices */
-                 if (chmod(full_path, cfg->gpu_mode) == 0) updated_gpu = 1;
-                 else ds_warn("Failed to chmod GPU node %s: %s", full_path, strerror(errno));
-
-                 if (cfg->gpu_group != (gid_t)-1) {
-                   if (chown(full_path, -1, cfg->gpu_group) == 0) updated_gpu = 1;
-                   else ds_warn("Failed to chown GPU node %s: %s", full_path, strerror(errno));
-                 }
+                 if (update_gpu_node_permissions(full_path, cfg->gpu_mode,
+                                                 cfg->gpu_group))
+                   updated_gpu = 1;
               }
             }
           }

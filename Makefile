@@ -50,6 +50,8 @@ find-cc = $(shell \
 		echo "$(1)-gcc"; \
 	elif [ -d "/opt/cross/bin" ] && [ -f "/opt/cross/bin/$(1)-gcc" ]; then \
 		echo "/opt/cross/bin/$(1)-gcc"; \
+    elif [ -f "$(HOME_VAR)/toolchains/$(1)/bin/$(1)-gcc" ]; then \
+        echo "$(HOME_VAR)/toolchains/$(1)/bin/$(1)-gcc"; \
 	else \
 		echo ""; \
 	fi)

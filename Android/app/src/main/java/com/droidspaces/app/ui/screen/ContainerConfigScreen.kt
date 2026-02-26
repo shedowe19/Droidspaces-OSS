@@ -14,6 +14,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.droidspaces.app.ui.component.ToggleCard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.clickable
 import com.droidspaces.app.R
 
 import androidx.compose.ui.text.style.TextOverflow

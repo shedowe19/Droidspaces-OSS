@@ -121,26 +121,18 @@ void android_configure_iptables(void) {
   if (!is_android())
     return;
 
-  ds_log("Configuring iptables for container networking...");
-
-  char *cmds[][32] = {{"iptables", "-t", "filter", "-F", NULL},
-                      {"ip6tables", "-t", "filter", "-F", NULL},
-                      {"iptables", "-P", "FORWARD", "ACCEPT", NULL},
-                      /* The following rules are disabled as they can disrupt host connectivity
-                       * when using shared network namespaces (which is default). */
-                      /* {"iptables", "-t", "nat", "-A", "POSTROUTING", "-s",
-                       "10.0.3.0/24", "!", "-d", "10.0.3.0/24", "-j",
-                       "MASQUERADE", NULL}, */
-                      /* {"iptables", "-t", "nat", "-A", "OUTPUT", "-p", "tcp",
-                       "-d", "127.0.0.1", "-m", "tcp", "--dport", "1:65535",
-                       "-j", "REDIRECT", "--to-ports", "1-65535", NULL}, */
-                      /* {"iptables", "-t", "nat", "-A", "OUTPUT", "-p", "udp",
-                       "-d", "127.0.0.1", "-m", "udp", "--dport", "1:65535",
-                       "-j", "REDIRECT", "--to-ports", "1-65535", NULL} */};
-
-  for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
-    run_command_quiet(cmds[i]);
-  }
+  /*
+   * Droidspaces uses shared network namespace (CLONE_NEWNET is NOT used).
+   * Therefore, iptables rules are applied to the host's global network stack.
+   *
+   * Previously, we flushed the filter table ('iptables -F') which broke Android's
+   * connectivity (WiFi/Cellular) by removing system rules. We also added NAT/REDIRECT
+   * rules for a non-existent 10.0.3.0/24 subnet.
+   *
+   * For shared networking, no iptables rules are needed. Containers share localhost
+   * and external interfaces directly.
+   */
+  ds_log("Shared network mode active: Skipping iptables configuration to preserve host connectivity.");
 }
 
 /* ---------------------------------------------------------------------------

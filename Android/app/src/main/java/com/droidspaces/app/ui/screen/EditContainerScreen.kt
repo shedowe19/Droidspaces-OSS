@@ -57,6 +57,7 @@ fun EditContainerScreen(
     var enableAndroidStorage by remember { mutableStateOf(container.enableAndroidStorage) }
     var enableHwAccess by remember { mutableStateOf(container.enableHwAccess) }
     var enableSensors by remember { mutableStateOf(container.enableSensors) }
+    var networkMode by remember { mutableStateOf(container.networkMode) }
     var selinuxPermissive by remember { mutableStateOf(container.selinuxPermissive) }
     var volatileMode by remember { mutableStateOf(container.volatileMode) }
     var bindMounts by remember { mutableStateOf(container.bindMounts) }
@@ -69,6 +70,7 @@ fun EditContainerScreen(
     var savedEnableAndroidStorage by remember { mutableStateOf(container.enableAndroidStorage) }
     var savedEnableHwAccess by remember { mutableStateOf(container.enableHwAccess) }
     var savedEnableSensors by remember { mutableStateOf(container.enableSensors) }
+    var savedNetworkMode by remember { mutableStateOf(container.networkMode) }
     var savedSelinuxPermissive by remember { mutableStateOf(container.selinuxPermissive) }
     var savedVolatileMode by remember { mutableStateOf(container.volatileMode) }
     var savedBindMounts by remember { mutableStateOf(container.bindMounts) }
@@ -93,6 +95,7 @@ fun EditContainerScreen(
             enableAndroidStorage != savedEnableAndroidStorage ||
             enableHwAccess != savedEnableHwAccess ||
             enableSensors != savedEnableSensors ||
+            networkMode != savedNetworkMode ||
             selinuxPermissive != savedSelinuxPermissive ||
             volatileMode != savedVolatileMode ||
             bindMounts != savedBindMounts ||
@@ -122,6 +125,7 @@ fun EditContainerScreen(
                     enableAndroidStorage = enableAndroidStorage,
                     enableHwAccess = enableHwAccess,
                     enableSensors = enableSensors,
+                    networkMode = networkMode,
                     selinuxPermissive = selinuxPermissive,
                     volatileMode = volatileMode,
                     bindMounts = bindMounts,
@@ -142,6 +146,7 @@ fun EditContainerScreen(
                         savedEnableAndroidStorage = enableAndroidStorage
                         savedEnableHwAccess = enableHwAccess
                         savedEnableSensors = enableSensors
+                        savedNetworkMode = networkMode
                         savedSelinuxPermissive = selinuxPermissive
                         savedVolatileMode = volatileMode
                         savedBindMounts = bindMounts
@@ -425,6 +430,75 @@ fun EditContainerScreen(
                     enableSensors = it
                 }
             )
+
+            // Network Mode Selection
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Wifi,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text(
+                                text = "Network Mode",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Choose how the container connects to the network.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    val modes = listOf(
+                        "host" to "Host (Shared IP)",
+                        "nat" to "NAT (Private IP / Fake MAC)",
+                        "macvlan" to "Macvlan (Bridge)"
+                    )
+
+                    modes.forEach { (mode, label) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clickable {
+                                    clearFocus()
+                                    networkMode = mode
+                                }
+                        ) {
+                            RadioButton(
+                                selected = (networkMode == mode),
+                                onClick = {
+                                    clearFocus()
+                                    networkMode = mode
+                                }
+                            )
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
+                }
+            }
 
             ToggleCard(
                 icon = Icons.Default.Security,

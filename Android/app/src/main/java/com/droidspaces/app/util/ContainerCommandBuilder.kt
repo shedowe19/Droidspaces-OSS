@@ -64,6 +64,10 @@ object ContainerCommandBuilder {
             parts.add("--sensors")
         }
 
+        if (container.networkMode != "host") {
+            parts.add("--network-mode=${container.networkMode}")
+        }
+
         if (container.selinuxPermissive) {
             parts.add("--selinux-permissive")
         }
@@ -119,6 +123,7 @@ object ContainerCommandBuilder {
         if (container.enableAndroidStorage) parts.add("--enable-android-storage")
         if (container.enableHwAccess) parts.add("--hw-access")
         if (container.enableSensors) parts.add("--sensors")
+        if (container.networkMode != "host") parts.add("--network-mode=${container.networkMode}")
         if (container.selinuxPermissive) parts.add("--selinux-permissive")
         if (container.volatileMode) parts.add("-V")
 

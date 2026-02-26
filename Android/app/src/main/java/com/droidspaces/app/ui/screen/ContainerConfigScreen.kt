@@ -28,6 +28,7 @@ fun ContainerConfigScreen(
     initialEnableAndroidStorage: Boolean = false,
     initialEnableHwAccess: Boolean = false,
     initialEnableSensors: Boolean = false,
+    initialNetworkMode: String = "host",
     initialSelinuxPermissive: Boolean = false,
     initialVolatileMode: Boolean = false,
     initialBindMounts: List<BindMount> = emptyList(),
@@ -38,6 +39,7 @@ fun ContainerConfigScreen(
         enableAndroidStorage: Boolean,
         enableHwAccess: Boolean,
         enableSensors: Boolean,
+        networkMode: String,
         selinuxPermissive: Boolean,
         volatileMode: Boolean,
         bindMounts: List<BindMount>,
@@ -50,6 +52,7 @@ fun ContainerConfigScreen(
     var enableAndroidStorage by remember { mutableStateOf(initialEnableAndroidStorage) }
     var enableHwAccess by remember { mutableStateOf(initialEnableHwAccess) }
     var enableSensors by remember { mutableStateOf(initialEnableSensors) }
+    var networkMode by remember { mutableStateOf(initialNetworkMode) }
     var selinuxPermissive by remember { mutableStateOf(initialSelinuxPermissive) }
     var volatileMode by remember { mutableStateOf(initialVolatileMode) }
     var bindMounts by remember { mutableStateOf(initialBindMounts) }
@@ -126,7 +129,7 @@ fun ContainerConfigScreen(
             ) {
                 Button(
                     onClick = {
-                        onNext(enableIPv6, enableAndroidStorage, enableHwAccess, enableSensors, selinuxPermissive, volatileMode, bindMounts, dnsServers, runAtBoot)
+                        onNext(enableIPv6, enableAndroidStorage, enableHwAccess, enableSensors, networkMode, selinuxPermissive, volatileMode, bindMounts, dnsServers, runAtBoot)
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -209,6 +212,69 @@ fun ContainerConfigScreen(
                 checked = enableSensors,
                 onCheckedChange = { enableSensors = it }
             )
+
+            // Network Mode Selection
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Wifi,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text(
+                                text = "Network Mode",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Choose how the container connects to the network.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    val modes = listOf(
+                        "host" to "Host (Shared IP)",
+                        "nat" to "NAT (Private IP / Fake MAC)",
+                        "macvlan" to "Macvlan (Bridge)"
+                    )
+
+                    modes.forEach { (mode, label) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clickable { networkMode = mode }
+                        ) {
+                            RadioButton(
+                                selected = (networkMode == mode),
+                                onClick = { networkMode = mode }
+                            )
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
+                }
+            }
 
             ToggleCard(
                 icon = Icons.Default.Security,

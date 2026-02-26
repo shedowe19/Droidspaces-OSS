@@ -178,6 +178,11 @@ int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg) {
         subnet_id = (subnet_id % 250) + 1;
     }
 
+    if (retries <= 0) {
+        ds_error("Failed to allocate free subnet for NAT mode (exhausted retries)");
+        return -1;
+    }
+
     char host_ip[32], container_ip[32];
     snprintf(host_ip, sizeof(host_ip), "10.0.%d.1/24", subnet_id);
     snprintf(container_ip, sizeof(container_ip), "10.0.%d.2/24", subnet_id);
@@ -445,7 +450,7 @@ int fix_networking_rootfs(struct ds_config *cfg) {
 
   /* Link /etc/resolv.conf */
   unlink("/etc/resolv.conf");
-  if (symlink("/run/resolvconf/resolv.conf", "/etc/resolv.conf") < 0) { /* ignore */ }
+  (void)symlink("/run/resolvconf/resolv.conf", "/etc/resolv.conf");
 
   /* 4. Android Network Groups */
   if (is_android()) {

@@ -447,7 +447,12 @@ int start_rootfs(struct ds_config *cfg) {
       if (cfg->net_mode != DS_NET_HOST) {
           char buf;
           ds_log("INIT: Waiting for monitor configuration...");
-          if (read(monitor_pipe[0], &buf, 1) != 1) {
+          /* Loop to handle EINTR (signals) */
+          ssize_t n;
+          while ((n = read(monitor_pipe[0], &buf, 1)) < 0) {
+              if (errno != EINTR) break;
+          }
+          if (n != 1) {
               ds_error("Failed to sync with monitor (network setup)");
               exit(EXIT_FAILURE);
           }
@@ -471,7 +476,12 @@ int start_rootfs(struct ds_config *cfg) {
     if (cfg->net_mode != DS_NET_HOST) {
       /* Wait for Init to signal that it has unshared CLONE_NEWNET */
       char buf;
-      if (read(init_ready_pipe[0], &buf, 1) != 1) {
+      /* Loop to handle EINTR (signals) */
+      ssize_t n;
+      while ((n = read(init_ready_pipe[0], &buf, 1)) < 0) {
+          if (errno != EINTR) break;
+      }
+      if (n != 1) {
           ds_error("Failed to sync with Init (netns creation)");
           kill(init_pid, SIGKILL);
           exit(EXIT_FAILURE);
@@ -491,7 +501,7 @@ int start_rootfs(struct ds_config *cfg) {
     close(init_ready_pipe[0]);
 
     /* Ensure monitor is not sitting inside any mount point */
-    if (chdir("/") < 0) { /* ignore */ }
+    (void)chdir("/");
 
     /* Stdio handling for monitor in background mode */
     if (!cfg->foreground) {

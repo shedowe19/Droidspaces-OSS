@@ -172,7 +172,10 @@ int setup_dev(const char *rootfs, int hw_access) {
             struct stat st;
             if (stat(full_path, &st) == 0) {
               if (S_ISDIR(st.st_mode)) {
-                 /* Recursively chmod directory contents */
+                 /* Recursively chmod directory contents (single-level only).
+                  * We assume GPU device directories like /dev/dri or /dev/dma_heap
+                  * contain flat lists of device nodes. Deeply nested paths are not
+                  * processed. */
                  DIR *sub = opendir(full_path);
                  if (sub) {
                    struct dirent *sub_e;

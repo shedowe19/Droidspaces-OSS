@@ -129,7 +129,7 @@ int main(int argc, char **argv) {
    */
   const char *discovered_cmd = NULL;
   int temp_optind = optind;
-  while (getopt_long(argc, argv, "+r:i:n:p:h:d:fHISPvVB:", long_options,
+  while (getopt_long(argc, argv, "+r:i:n:p:h:d:fHISPvVB:gs", long_options,
                      NULL) != -1)
     ;
   if (optind < argc)

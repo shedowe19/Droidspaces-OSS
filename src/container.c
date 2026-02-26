@@ -337,7 +337,7 @@ int start_rootfs(struct ds_config *cfg) {
   /* Main creates sync_pipe. Main reads [0]. Monitor forks Init.
    * Init writes its PID to [1]. monitor_pipe is for Monitor->Init sync.
    * init_ready_pipe is for Init->Monitor sync (NetNS ready). */
-  int sync_pipe[2]; /* Init -> Monitor (sends PID) */
+  int sync_pipe[2]; /* Init -> Main (sends PID) */
   if (pipe(sync_pipe) < 0)
     ds_die("pipe failed: %s", strerror(errno));
 
@@ -574,7 +574,7 @@ int start_rootfs(struct ds_config *cfg) {
   }
 
   if (n != sizeof(pid_t)) {
-    ds_error("Monitor failed to send container PID.");
+    ds_error("Init failed to send container PID.");
     close(sync_pipe[0]);
     return -1;
   }

@@ -432,7 +432,14 @@ int start_rootfs(struct ds_config *cfg) {
         ds_log("INIT: Unshare success.");
 
         /* Signal Monitor that netns is ready */
-        if (write(init_ready_pipe[1], "1", 1) < 0) { /* ignore */ }
+        ssize_t n;
+        while ((n = write(init_ready_pipe[1], "1", 1)) < 0) {
+            if (errno != EINTR) break;
+        }
+        if (n != 1) {
+            ds_error("Failed to signal Monitor (netns ready): %s", strerror(errno));
+            exit(EXIT_FAILURE);
+        }
       }
       close(init_ready_pipe[1]);
 
@@ -440,7 +447,17 @@ int start_rootfs(struct ds_config *cfg) {
        * Main reads this from sync_pipe[0]. Monitor does not see it. */
       pid_t self_pid = getpid();
       ds_log("INIT: Writing PID %d to parent...", self_pid);
-      if (write(sync_pipe[1], &self_pid, sizeof(pid_t)) < 0) { /* ignore */ }
+      /* Variable n is already declared in this scope if the previous block ran,
+       * but we are inside an if block for net_mode != HOST.
+       * Let's redeclare safely or assume new block. */
+      ssize_t nw;
+      while ((nw = write(sync_pipe[1], &self_pid, sizeof(pid_t))) < 0) {
+          if (errno != EINTR) break;
+      }
+      if (nw != sizeof(pid_t)) {
+          ds_error("Failed to write PID to parent: %s", strerror(errno));
+          exit(EXIT_FAILURE);
+      }
       close(sync_pipe[1]);
 
       /* Wait for Monitor to configure network */
@@ -495,7 +512,15 @@ int start_rootfs(struct ds_config *cfg) {
       }
 
       /* Signal Init to proceed */
-      if (write(monitor_pipe[1], "1", 1) < 0) { /* ignore */ }
+      ssize_t n;
+      while ((n = write(monitor_pipe[1], "1", 1)) < 0) {
+          if (errno != EINTR) break;
+      }
+      if (n != 1) {
+          ds_error("Failed to signal Init (network setup): %s", strerror(errno));
+          kill(init_pid, SIGKILL);
+          exit(EXIT_FAILURE);
+      }
     }
     close(monitor_pipe[1]);
     close(init_ready_pipe[0]);
@@ -550,6 +575,7 @@ int start_rootfs(struct ds_config *cfg) {
 
   if (n != sizeof(pid_t)) {
     ds_error("Monitor failed to send container PID.");
+    close(sync_pipe[0]);
     return -1;
   }
   close(sync_pipe[0]);

@@ -198,17 +198,25 @@ int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg) {
       return -1;
     }
 
+    /* Helper macro for cleanup on failure */
+    #define CLEANUP_NAT_AND_RETURN(ret_code) \
+        do { \
+            char *args_del[] = {"ip", "link", "delete", veth_host, NULL}; \
+            run_command_quiet(args_del); \
+            return ret_code; \
+        } while (0)
+
     /* 2. Configure Host Side */
     char *args_host_up[] = {"ip", "link", "set", veth_host, "up", NULL};
     if (run_command_quiet(args_host_up) != 0) {
         ds_error("Failed to set %s up", veth_host);
-        return -1;
+        CLEANUP_NAT_AND_RETURN(-1);
     }
 
     char *args_host_ip[] = {"ip", "addr", "add", host_ip, "dev", veth_host, NULL};
     if (run_command_quiet(args_host_ip) != 0) {
         ds_error("Failed to assign host IP %s to %s", host_ip, veth_host);
-        return -1;
+        CLEANUP_NAT_AND_RETURN(-1);
     }
 
     /* 3. Enable NAT (Masquerade) on Host */
@@ -218,19 +226,26 @@ int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg) {
     char *args_nat[] = {"iptables", "-t", "nat", "-A", "POSTROUTING", "-s", subnet_cidr, "-j", "MASQUERADE", NULL};
     if (run_command_quiet(args_nat) != 0) {
         ds_error("Failed to set up NAT masquerade for %s", subnet_cidr);
-        return -1;
+        CLEANUP_NAT_AND_RETURN(-1);
     }
 
     char *args_fwd[] = {"iptables", "-A", "FORWARD", "-i", veth_host, "-j", "ACCEPT", NULL};
     if (run_command_quiet(args_fwd) != 0) {
         ds_error("Failed to allow forwarding in on %s", veth_host);
-        return -1;
+        /* Try to cleanup NAT rule */
+        char *args_nat_del[] = {"iptables", "-t", "nat", "-D", "POSTROUTING", "-s", subnet_cidr, "-j", "MASQUERADE", NULL};
+        run_command_quiet(args_nat_del);
+        CLEANUP_NAT_AND_RETURN(-1);
     }
 
     char *args_fwd2[] = {"iptables", "-A", "FORWARD", "-o", veth_host, "-j", "ACCEPT", NULL};
     if (run_command_quiet(args_fwd2) != 0) {
         ds_error("Failed to allow forwarding out on %s", veth_host);
-        return -1;
+        char *args_nat_del[] = {"iptables", "-t", "nat", "-D", "POSTROUTING", "-s", subnet_cidr, "-j", "MASQUERADE", NULL};
+        run_command_quiet(args_nat_del);
+        char *args_fwd_del[] = {"iptables", "-D", "FORWARD", "-i", veth_host, "-j", "ACCEPT", NULL};
+        run_command_quiet(args_fwd_del);
+        CLEANUP_NAT_AND_RETURN(-1);
     }
 
     /* 4. Move Peer to Container Namespace */
@@ -239,7 +254,14 @@ int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg) {
     char *args_move[] = {"ip", "link", "set", veth_peer, "netns", pid_str, NULL};
     if (run_command_quiet(args_move) != 0) {
       ds_error("Failed to move interface %s to container PID %s", veth_peer, pid_str);
-      return -1;
+      /* Cleanup all rules */
+      char *args_nat_del[] = {"iptables", "-t", "nat", "-D", "POSTROUTING", "-s", subnet_cidr, "-j", "MASQUERADE", NULL};
+      run_command_quiet(args_nat_del);
+      char *args_fwd_del[] = {"iptables", "-D", "FORWARD", "-i", veth_host, "-j", "ACCEPT", NULL};
+      run_command_quiet(args_fwd_del);
+      char *args_fwd2_del[] = {"iptables", "-D", "FORWARD", "-o", veth_host, "-j", "ACCEPT", NULL};
+      run_command_quiet(args_fwd2_del);
+      CLEANUP_NAT_AND_RETURN(-1);
     }
 
     /* 5. Configure Container Side (using fork + setns) */
@@ -349,6 +371,8 @@ int ds_configure_network_namespace(pid_t container_pid, struct ds_config *cfg) {
     char *args_move[] = {"ip", "link", "set", mac_if, "netns", pid_str, NULL};
     if (run_command_quiet(args_move) != 0) {
         ds_error("Failed to move macvlan interface to container PID %s", pid_str);
+        char *args_del[] = {"ip", "link", "delete", mac_if, NULL};
+        run_command_quiet(args_del);
         return -1;
     }
 

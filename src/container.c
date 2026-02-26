@@ -1032,9 +1032,9 @@ int show_info(struct ds_config *cfg, int trust_cfg_pid) {
     /* HW access */
     int hw = detect_hw_access_in_container(pid);
     if (hw)
-      printf("  " C_RED "HW access:" C_RESET " enabled\n");
+      printf("  " C_RED "HW / GPU access:" C_RESET " enabled\n");
     else
-      printf("  HW access: disabled\n");
+      printf("  HW / GPU access: disabled\n");
   } else {
     /* Best effort: read os-release from rootfs path */
     if (cfg->rootfs_path[0]) {
